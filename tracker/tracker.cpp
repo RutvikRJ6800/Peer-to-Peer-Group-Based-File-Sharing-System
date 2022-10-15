@@ -20,9 +20,10 @@ int servingThreadIndex=0;
 int port = 7000;
 string ip = "127.1.2.1";
 
+
+
 // uid, [ip, port]
 unordered_map<string, vector<string>> isLoggedIn;
-
 
 class UserInfo{
     public:
@@ -90,10 +91,19 @@ unordered_map<string, vector<string>> pendingRequest;
 void loadDATA(){
     UserInfo u1 = UserInfo("jsn", "", "");
     users["jsn"] = u1;
+
+    GroupInfo g1 = GroupInfo("jsn");
+    groups["swami"] = g1;
+
+    groups["swami"].members.push_back("rj");
+
+    UserInfo u2 = UserInfo("rj", "", "");
+    users["rj"] = u2;
+
+    GroupInfo g2 = GroupInfo("rj");
+    groups["shree"] = g1;
+
 }
-
-
-
 
 // **********************************************
 // functions for executing tracker functionality
@@ -156,8 +166,9 @@ int loginUser(vector<string> cmd){
         return -1;
     }
     else if(users[cmd[1]].password == cmd[2]){ // password matched
-        users[cmd[1]].ip = cmd[3];
-        users[cmd[1]].port = cmd[4];
+        users[cmd[1]].ip = cmd[4];
+        users[cmd[1]].port = cmd[5];
+        cout<<"ip: "<<users[cmd[1]].ip<<" && port: "<<users[cmd[1]].port<<endl;
         // cout<<"set ip as: "<<users[cmd[1]].ip<<" && port as: "<<users[cmd[1]].port;
         
         return 0;
@@ -168,10 +179,12 @@ int loginUser(vector<string> cmd){
 }
 
 int createGroup(vector<string> cmd){
-    if(users.find(cmd[2])==users.end()){ // user does not exist with given uid
+    if(users.size() == 0 || users.find(cmd[2])==users.end()){ // user does not exist with given uid
+        // cout<<"A"<<endl;
         return -1;
     }
-    else if(users.find(cmd[2])!=users.end() && users[cmd[2]].ip == ""){ // user is not logged in
+    else if( users[cmd[2]].ip == ""){ // user is not logged in
+    // cout<<"B"<<endl;
         return -1;
     }
     else if(users.find(cmd[2])!= users.end()){ // logged in successfully
@@ -184,10 +197,13 @@ int createGroup(vector<string> cmd){
 
         }
         else{
+            // cout<<"C"<<endl;
             return -1; // group name already exist.
         }
+        // cout<<"D"<<endl;
 
     }
+    // cout<<"E"<<endl;
     return -1; // unexpected error
 }
 
@@ -234,19 +250,27 @@ int listRequests(vector<string> cmd){
 
     string gid = cmd[1];
     string uid = cmd[2];
-    if(groups.size() > 0 && groups.find(gid) == groups.end()){
+    if(groups.size() == 0 || groups.find(gid) == groups.end()){
         // no such group not exist
+        cout<<"a"<<endl;
         return -1;
     }
     else if(groups.size() > 0 && groups.find(gid) != groups.end()){
         if(groups[gid].owner != uid){
             // requested user is not the owner of the group
+            cout<<"b"<<endl;
             return -2;
         }
+        else if(pendingRequest[gid].size() == 0){
+            cout<<"f"<<endl;
+            return -4; // no pending requests.
+        }
         else{
+            cout<<"c"<<endl;
             return 0;
         }
     }
+    cout<<"d"<<endl;
     return -3;
 }
 
@@ -256,6 +280,8 @@ string getPendingRequestsString(vector<string> cmd){
     string uid = cmd[2];
 
     string res = "";
+
+    if(pendingRequest[gid].size()== 0)return res;
     
     for(size_t i = 0; i < pendingRequest[gid].size()-1; i++){
         res += pendingRequest[gid][i] + "$";
@@ -270,7 +296,7 @@ int acceptRequest(vector<string> cmd){
     string gid = cmd[1];
     string pendingUid = cmd[2];
     string uid = cmd[3];
-    if(groups.size() > 0 && groups.find(gid) == groups.end()){
+    if(groups.size() == 0 || groups.find(gid) == groups.end()){
         // no such group not exist
         return -1;
     }
@@ -332,7 +358,9 @@ string listFiles(vector<string> cmd){
 }
 
 
-
+// ***************************************
+// this function servs the peer commands
+// ***************************************
 
 void * serverserving(void * arg){
 
@@ -349,9 +377,8 @@ void * serverserving(void * arg){
         Logger::Info(msg.c_str());
 
         char buffer[1024] = {0};
-        int fd = *(int *)arg;
 
-        int valread = read(fd, buffer, 1024);
+        int valread = read(new_socket, buffer, 1024);
         printf("%s\n", buffer);
 
         Logger::Info("*** Recieved Msg ***");
@@ -374,12 +401,12 @@ void * serverserving(void * arg){
                 // strcpy(serverreply, replyMsg.c_str());
 
 
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 
             }else{
                 string replyMsg = "User "+ cmd[1] +" Failed to create.";
 
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
             }
             Logger::Info("Reply Msg send to client");
             
@@ -391,12 +418,12 @@ void * serverserving(void * arg){
             if(loginUser(cmd) == 0){
                 string replyMsg = "User "+ cmd[1] +" successfuly logged in.";
 
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
             }else{
-                string replyMsg = "User "+ cmd[1] +" Failed to logged in.";
+                string replyMsg = "Failed"; 
 
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
             }
         }
@@ -406,12 +433,12 @@ void * serverserving(void * arg){
             if(createGroup(cmd) == 0){
                 string replyMsg = "Group '"+ cmd[1] +"' successfuly created.";
 
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
             }else{
                 string replyMsg = "Group '"+ cmd[1] +"' Failed to create.";
 
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
             }
         }
@@ -423,13 +450,13 @@ void * serverserving(void * arg){
             if(joinGroup(cmd) == 0){
                 
                 replyMsg = "Request successfully sent to join Group '"+ cmd[1] +"'";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
                 
             }else{
 
                 replyMsg = "Group '"+ cmd[1] +"' Failed to join. May be No such Group Exist !!";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
                 
             }
@@ -441,13 +468,13 @@ void * serverserving(void * arg){
             if(leaveGroup(cmd) == 0){
                 
                 replyMsg = "Group '"+ cmd[1] +"' successfuly joined.";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
                 
             }else{
 
                 replyMsg = "Group '"+ cmd[1] +"' Failed to leave. May be No such Group Exist or You are not member of group !!";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
                 
             }
@@ -460,27 +487,32 @@ void * serverserving(void * arg){
             if(status == 0){
                 
                 replyMsg = getPendingRequestsString(cmd);
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
                 
             }
             else if(status == -1){
 
                 replyMsg = "No such Group Exist.";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
             }
             else if(status == -2){
 
                 replyMsg = "You are not the owner of the '"+cmd[1]+"' group.";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
 
+            }
+            else if(status == -4){
+                replyMsg = " ";
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
+                Logger::Error("Reply Msg send to client");
             }
             else{
 
                 replyMsg = "Group '"+ cmd[1] +"' Failed to fetch pending request. !!";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
                 
             }
@@ -496,34 +528,34 @@ void * serverserving(void * arg){
             if(status == 0){
                 
                 replyMsg = "Request of '"+ cmd[2] +"' accepted successfuly to join group.";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
                 
             }
             else if(status == -1){
 
                 replyMsg = "No such Group Exist.";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
             }
             else if(status == -2){
 
                 replyMsg = "You are not the owner of the '"+cmd[1]+"' group.";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
 
             }
             else if(status == -3){
 
                 replyMsg = "'"+cmd[2]+"' User is already member of the '"+cmd[1]+"' group.";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
 
             }
             else{
 
                 replyMsg = "Failed to accept the request of user '"+cmd[2]+"'. !!";
-                send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+                send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Error("Reply Msg send to client");
                 
             }
@@ -539,7 +571,7 @@ void * serverserving(void * arg){
                 replyMsg = "No groups present.!!";
             }
 
-            send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+            send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
             Logger::Error("Reply Msg send to client");
 
             // listGroups(cmd[1]);
@@ -550,7 +582,7 @@ void * serverserving(void * arg){
             Logger::Info("executing 'list_files'...");
             replyMsg = listFiles(cmd);
 
-            send(fd, replyMsg.c_str(), replyMsg.size(), 0);
+            send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
             Logger::Error("Reply Msg send to client");
             
         }
@@ -592,21 +624,13 @@ void * serverserving(void * arg){
 
     }
 
-
-    
-    
-    // string replyMsg = "This is reply Msg from Tracker";
-    // char *serverreply = new char[replyMsg.length() + 1];
-    // strcpy(serverreply, replyMsg.c_str());
-    
-
-    // send(fd, serverreply, strlen(serverreply), 0);
-	// Logger::Info("Reply Msg send to client");
-    
-	// pthread_exit(NULL);
+    return NULL;
 }
 
 
+// *******************************************************************
+// start listening at assigned port and create tread for each new peer
+// *******************************************************************
 
 void * listening(void* arg){
 
@@ -673,7 +697,9 @@ int main(){
     // ip = "127.1.1.1";
     // string arg1 = "127.1.1.1:7000";
 
-    Logger::EnableFileOutput();
+
+	ofstream log_file("logFile.txt", ios_base::out | ios_base::trunc );
+
     Logger::Info("Tracker Started Servicing ");
 
     loadDATA();

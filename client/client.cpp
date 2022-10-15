@@ -31,6 +31,7 @@ int client_fd;
 /*##############################################
 split command taken as inp with space separate
  ##############################################*/
+
 vector<string> getCommand(string inp)
 {
     vector<string> ans;
@@ -69,6 +70,37 @@ vector<string> getCommand(string inp)
     }
 
     return ans;
+}
+
+vector<string> splitString(string inp, char delim)
+{
+    vector<string> ans;
+    string temp = "";
+    for (size_t i = 0; i < inp.size(); i++)
+    {
+        if (inp[i] == '$')
+        {	
+			if(temp.size()>0)
+            ans.push_back(temp);
+            temp = "";
+        }
+        else
+        {
+            temp += inp[i];
+        }
+    }
+    if (temp.size() > 0)
+    {
+        ans.push_back(temp);
+    }
+
+    return ans;
+}
+
+void printVector(vector<string> res){
+    for(size_t i=0; i<res.size(); i++){
+        cout<<res[i]<<endl;
+    }
 }
 
 bool sendFileToPeerClient(string fileName, int socketfd)
@@ -261,22 +293,32 @@ int sendCommandToTracker(string cmd){
         return 0;
     } 
 
-    // char responseBuffer[1024] = {0}; 
-
-    // if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-    //     Logger::Error("Couldn't read the response of server / got EOF.");
-    //     return -1;
-    // }
-
-
-    // printf("Tracker Response : => %s\n",responseBuffer);
-    // Logger::Info(responseBuffer);
-    // bzero((char *)&responseBuffer, sizeof(responseBuffer));
-    // return 0;
-
 }
 
+
+int receiveReplyFromTracker(){
+
+    char responseBuffer[1024] = {0};
+
+    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+        Logger::Error("Couldn't read the response of server / got EOF.");
+        Logger::Info("************************************");
+
+        return 0;
+
+    }
+    else{
+
+        printf("Tracker Response : => %s\n",responseBuffer);
+        Logger::Info(responseBuffer);
+        Logger::Info("************************************");
+        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+    }
+    
+    return -1;
+}
 
 int sendMsg()
 {
@@ -321,11 +363,13 @@ int sendMsg()
     printf("tracker response : => %s\n", buffer);
 
     close(server_fd);
+
+    return 0;
 }
 
 int main()
 {
-    Logger::EnableFileOutput();
+    // Logger::EnableFileOutput();
 
     Logger::Info("Client 1 start executing.");
     
@@ -356,23 +400,7 @@ int main()
             }
             else{
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0}; 
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-        
-                    }
-                    else{
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-
-                    }
-
-
+                    receiveReplyFromTracker();
                 }
             }
             
@@ -384,29 +412,28 @@ int main()
                 Logger::Error("Wrong arguments in 'login'");
                 continue;
             }
+            else if(isLoggedIn){
+                cout<<"You are already Logged in."<<endl;
+                continue;
+            }
             else{
-                cmdStr = cmdStr+" "+ip+" "+to_string(port);
+                cmdStr += " "+uname+" "+ip+" "+to_string(port);
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-                        return -1;
+                    char resBuff[1024];
+                    read(client_fd, resBuff, sizeof(resBuff));
+                    if(string(resBuff) == "Failed"){
+                        Logger::Error("Unsucessful login");
+                        cout<<"Invalid ID or Password. Please try Again!!"<<endl;
                     }
-                    else{
-
+                    else {
+                        isLoggedIn = true;
                         uname = cmd[1];
-                        isLoggedIn = true; 
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+                        cout<<"Logged in as: "<<uname<<endl;
 
                     }
-
-
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
                 }
             }
         }
@@ -423,24 +450,7 @@ int main()
             else{
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-                        Logger::Info("************************************");
-                        return -1;
-                    }
-                    else{
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-
-                    }
-
-
+                    receiveReplyFromTracker();
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -460,24 +470,7 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-                        Logger::Info("************************************");
-    
-                    }
-                    else{
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-
-                    }
-
-
+                    receiveReplyFromTracker();
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -497,24 +490,7 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-                        Logger::Info("************************************");
-    
-                    }
-                    else{
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-
-                    }
-
-
+                    receiveReplyFromTracker();
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -534,23 +510,26 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
+                    
+                    char responseBuffer[1024*512] = {0};
 
                     if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
 
                         Logger::Error("Couldn't read the response of server / got EOF.");
                         Logger::Info("************************************");
-    
+
+                        return 0;
+
                     }
                     else{
+                        
+                        string response(responseBuffer);
+                        vector<string> res = splitString(response, '$');
+                        printVector(res);
 
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
 
                     }
-
 
                 }
                 else{
@@ -558,6 +537,8 @@ int main()
                 }
             }
         }
+        
+        
         else if(cmd[0] == "accept_request"){
             if(cmd.size() != 3){
                 Logger::Error("Wrong arguments in 'accept_request'");
@@ -570,24 +551,7 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-                        Logger::Info("************************************");
-    
-                    }
-                    else{
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-
-                    }
-
-
+                    receiveReplyFromTracker();
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -607,24 +571,7 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-                        Logger::Info("************************************");
-    
-                    }
-                    else{ 
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-
-                    }
-
-
+                    receiveReplyFromTracker();
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -644,24 +591,7 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char responseBuffer[1024] = {0};
-
-                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-                        Logger::Error("Couldn't read the response of server / got EOF.");
-                        Logger::Info("************************************");
-    
-                    }
-                    else{ 
-
-                        printf("Tracker Response : => %s\n",responseBuffer);
-                        Logger::Info(responseBuffer);
-                        Logger::Info("************************************");
-                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-
-                    }
-
-
+                    receiveReplyFromTracker();
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -703,6 +633,10 @@ int main()
                 continue;
             }
             // stop_share(cmd[1]);
+        }
+        else if(cmd[0]== "qq"){
+            close(client_fd);
+            return 0;
         }
         else{
             Logger::Error("Incorrect command entered..!");
