@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <errno.h> 
 #include <pthread.h>
 #include <bits/stdc++.h>
 #include <semaphore.h>
@@ -20,8 +21,12 @@ int servingThreadIndex = 0;
 pthread_t tid;
 int trackerPort = 7000;
 string trakerrIP = "127.1.2.1";
-int port = 6000;
+
+string uname = "";
+bool isLoggedIn = false;
+int port = 6005;
 string ip = "127.1.1.1";
+int client_fd;
 
 /*##############################################
 split command taken as inp with space separate
@@ -106,27 +111,35 @@ bool recieveFileFromPeerServer(string fileName, int socketfd)
 
 void *peerServerServing(void *arg)
 {
+    int new_socket = *(int *)arg;
 
-    Logger::Info("Peer started servicing.");
+    while(1){
 
-    char buffer[1024] = {0};
-    int fd = *(int *)arg;
+        string msg = "Peer started servicing."+to_string(new_socket);
 
-    int valread = read(fd, buffer, 1024);
-    printf("%s\n", buffer);
+        Logger::Info(msg.c_str());
 
-    Logger::Info("*** Recieved Msg ***");
-    Logger::Info(buffer);
+        char buffer[1024] = {0};
+        int fd = *(int *)arg;
 
-    string replyMsg = "This is reply Msg from Peer";
-    char *serverreply = new char[replyMsg.length() + 1];
-    strcpy(serverreply, replyMsg.c_str());
+        int valread = read(fd, buffer, 1024);
+        printf("%s\n", buffer);
 
-    send(fd, serverreply, strlen(serverreply), 0);
-    Logger::Info("Reply Msg send to client");
+        Logger::Info("*** Recieved Msg ***");
+        Logger::Info(buffer);
 
-    pthread_exit(NULL);
-    return arg;
+        string replyMsg = "This is reply Msg from Peer";
+        char *serverreply = new char[replyMsg.length() + 1];
+        strcpy(serverreply, replyMsg.c_str());
+
+        send(fd, serverreply, strlen(serverreply), 0);
+        Logger::Info("Reply Msg send to client");
+
+        pthread_exit(NULL);
+        return arg;
+
+    }
+
 }
 
 void *createServer(void *param)
@@ -136,16 +149,23 @@ void *createServer(void *param)
     //    int serverPort = 7000;
     //    string serverIP = "127.1.1.1";
 
-    cout<<"[WARN] create server executing...";
+    cout<<"[WARN] create server executing..."<<endl;
 
-    int server_fd, new_socket;
+    int server_fd;
     struct sockaddr_in address;
-    int addrlen = sizeof(address);
+    int addrlen = sizeof(address), opt = 1;
 
     // Creating socket file descriptor
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // Forcefully attaching socket to the port 8080
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt)))
+    {
+        perror("setsockopt");
         exit(EXIT_FAILURE);
     }
 
@@ -160,7 +180,7 @@ void *createServer(void *param)
         exit(EXIT_FAILURE);
     }
 
-    if (listen(server_fd, 1) < 0)
+    if (listen(server_fd, 10) < 0)
     {
         perror("listen");
         exit(EXIT_FAILURE);
@@ -168,6 +188,7 @@ void *createServer(void *param)
 
     while (1)
     {
+        int new_socket;
         if ((new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen)) < 0)
         {
             perror("Error in accept connection");
@@ -183,37 +204,79 @@ void *createServer(void *param)
     }
 
     // closing the connected socket
-    close(new_socket);
+    //close(new_socket);
     // closing the listening socket
-    shutdown(server_fd, SHUT_RDWR);
+    // shutdown(server_fd, SHUT_RDWR);
 
     // pthread_exit(NULL);
 }
 
-/* int createUser(string uid, string password){
+int establishConnectionWithTracker(){
+
+    Logger::Info("Establishing connection with tracker");
+
+    int server_fd;
+    struct sockaddr_in peer_serv_add;
+
+    // creating the socket
+    if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+
+    peer_serv_add.sin_family = AF_INET;
+    peer_serv_add.sin_port = htons(trackerPort);
+    peer_serv_add.sin_addr.s_addr = INADDR_ANY;
+
+    if (inet_pton(AF_INET, trakerrIP.c_str(), &peer_serv_add.sin_addr) <= 0)
+    {
+        printf("\nInvalid address/ Address not supported \n");
+        return -1;
+    }
+
+    if (connect(client_fd, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
+    {
+        printf("\nConnection Failed \n");
+        Logger::Error("Failed to establish connection with tracker.");     
+        return -1;
+    }
+
+    Logger::Info("connction established with tracker.");
+    return 0;
+}
+
+int sendCommandToTracker(string cmd){
+    //send command to tracker
+    Logger::Info("sending command to Tracker");
+
+    char *cmdBuffer = new char[cmd.length() + 1];
+    strcpy(cmdBuffer, cmd.c_str());
+    if(send(client_fd, cmdBuffer, strlen(cmdBuffer), 0) < 0){
+        Logger::Error("Could not send the command.");
+        return -1;
+    }
+    else{
+        Logger::Info("successfully sent command to Tracker");
+        return 0;
+    } 
+
+    // char responseBuffer[1024] = {0}; 
+
+    // if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+    //     Logger::Error("Couldn't read the response of server / got EOF.");
+    //     return -1;
+    // }
+
+
+    // printf("Tracker Response : => %s\n",responseBuffer);
+    // Logger::Info(responseBuffer);
+    // bzero((char *)&responseBuffer, sizeof(responseBuffer));
+    // return 0;
 
 }
 
-int loginUser(string uid, string password){
-
-}
-
-int createGroup(string groupID){
-
-}
-
-int joinGroup(string groupID){
-
-}
-
-int leaveGroup(string groupID){
-
-}
-
-int listRequests(string groupID){
-
-}
- */
 
 int sendMsg()
 {
@@ -265,6 +328,10 @@ int main()
     Logger::EnableFileOutput();
 
     Logger::Info("Client 1 start executing.");
+    
+    if(establishConnectionWithTracker() != 0 ){
+        return -1;
+    }
 
     // make thread for server running paralelly
     pthread_t servingThread;
@@ -272,150 +339,377 @@ int main()
     pthread_create(&servingThread, NULL, createServer, NULL);
     // createServer(NULL);
 
+    while (1){
 
-        int i;
-    while(1){
-        cin>>i;
-        if(i==1){
-    sendMsg();
-        }
-        else{
-            break;
-        }
-    }
+        string cmdStr;
+        cout<<">>> ";
+        getline(cin, cmdStr);
 
+        vector<string> cmd;
+        cmd = getCommand(cmdStr);
 
+        if(cmd[0]=="create_user"){
 
-
-    /*
-        while (1){
-
-            string cmdStr;
-            cin>>cmdStr;
-
-            vector<string> cmd;
-            cmd = getCommand(cmdStr);
-
-            if(cmd[0]=="create_user"){
-
-                if(cmd.size()>3){
-                    Logger::Error("Too many arguments in 'create_user'");
-                    continue;
-                }
-                createUser(cmd[1], cmd[2]);
-
-            }
-            else if(cmd[0] == "login"){
-                if(cmd.size()>3){
-                    Logger::Error("Too many arguments in 'login'");
-                    continue;
-                }
-                //loginUser(cmd[1], cmd[2]);
-            }
-            else if(cmd[0] == "create_group"){
-                if(cmd.size()>2){
-                    Logger::Error("Too many arguments in 'create_group'");
-                    continue;
-                }
-                createGroup(cmd[1]);
-            }
-            else if(cmd[0] == "join_group"){
-                if(cmd.size()>2){
-                    Logger::Error("Too many arguments in 'join_group'");
-                    continue;
-                }
-                joinGroup(cmd[1]);
-            }
-            else if(cmd[0] == "join_group"){
-                if(cmd.size()>2){
-                    Logger::Error("Too many arguments in 'join_group'");
-                    continue;
-                }
-                joinGroup(cmd[1]);
-            }
-            else if(cmd[0] == "leave_group"){
-                if(cmd.size()>2){
-                    Logger::Error("Too many arguments in 'leave_group'");
-                    continue;
-                }
-                leaveGroup(cmd[1]);
-            }
-            else if(cmd[0] == "list_requests"){
-                if(cmd.size()>2){
-                    Logger::Error("Too many arguments in 'list_requests'");
-                    continue;
-                }
-                listRequests(cmd[1]);
-            }
-            else if(cmd[0] == "accept_request"){
-                if(cmd.size()>3){
-                    Logger::Error("Too many arguments in 'accept_request'");
-                    continue;
-                }
-                // acceptRequest(cmd[1]);
-            }
-            else if(cmd[0] == "list_groups"){
-                if(cmd.size()>2){
-                    Logger::Error("Too many arguments in 'list_groups'");
-                    continue;
-                }
-                // listGroups(cmd[1]);
-            }
-            else if(cmd[0] == "list_requests"){
-                if(cmd.size()>1){
-                    Logger::Error("Too many arguments in 'list_requests'");
-                    continue;
-                }
-                listRequests(cmd[1]);
-            }
-            else if(cmd[0] == "list_files"){
-                if(cmd.size()>2){
-                    Logger::Error("Too many arguments in 'list_files'");
-                    continue;
-                }
-                // listFiles(cmd[1]);
-            }
-            else if(cmd[0] == "upload_file"){
-                if(cmd.size()>3){
-                    Logger::Error("Too many arguments in 'upload_file'");
-                    continue;
-                }
-                // uploadFile(cmd[1]);
-            }
-            else if(cmd[0] == "download_file"){
-                if(cmd.size()>3){
-                    Logger::Error("Too many arguments in 'download_file'");
-                    continue;
-                }
-                // download_file(cmd[1]);
-            }
-            else if(cmd[0] == "logout"){
-                if(cmd.size()>1){
-                    Logger::Error("Too many arguments in 'logout'");
-                    continue;
-                }
-                // logout(cmd[1]);
-            }
-            else if(cmd[0] == "show_downloads"){
-                if(cmd.size()>1){
-                    Logger::Error("Too many arguments in 'show_downloads'");
-                    continue;
-                }
-                // show_downloads(cmd[1]);
-            }
-            else if(cmd[0] == "stop_share"){
-                if(cmd.size()>3){
-                    Logger::Error("Too many arguments in 'stop_share'");
-                    continue;
-                }
-                // stop_share(cmd[1]);
+            if(cmd.size() != 3){
+                Logger::Error("Wrong arguments in 'create_user'");
+                continue;
             }
             else{
-                Logger::Error("Too many arguments in 'stop_share'");
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0}; 
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+        
+                    }
+                    else{
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
             }
+            
 
         }
-     */
+        
+        else if(cmd[0] == "login"){
+            if(cmd.size()!=3){
+                Logger::Error("Wrong arguments in 'login'");
+                continue;
+            }
+            else{
+                cmdStr = cmdStr+" "+ip+" "+to_string(port);
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        return -1;
+                    }
+                    else{
+
+                        uname = cmd[1];
+                        isLoggedIn = true; 
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+            }
+        }
+        
+        else if(cmd[0] == "create_group"){
+            if(cmd.size()!=2){
+                Logger::Error("Wrong arguments in 'create_group'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+                        return -1;
+                    }
+                    else{
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
+        }
+
+        else if(cmd[0] == "join_group"){
+            if(cmd.size() != 2){
+                Logger::Error("Wrong arguments in 'join_group'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+    
+                    }
+                    else{
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
+        }
+        
+        else if(cmd[0] == "leave_group"){
+            if(cmd.size() != 2){
+                Logger::Error("Wrong arguments in 'leave_group'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+    
+                    }
+                    else{
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
+        }
+        
+        else if(cmd[0] == "list_requests"){
+            if(cmd.size() != 2){
+                Logger::Error("Wrong arguments in 'list_requests'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+    
+                    }
+                    else{
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
+        }
+        else if(cmd[0] == "accept_request"){
+            if(cmd.size() != 3){
+                Logger::Error("Wrong arguments in 'accept_request'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+    
+                    }
+                    else{
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
+        }
+        
+        else if(cmd[0] == "list_groups"){
+            if(cmd.size() != 1){
+                Logger::Error("Wrong arguments in 'list_groups'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+    
+                    }
+                    else{ 
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
+        }
+
+        else if(cmd[0] == "list_files"){
+            if(cmd.size() != 2){
+                Logger::Error("Wrong arguments in 'list_files'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024] = {0};
+
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+    
+                    }
+                    else{ 
+
+                        printf("Tracker Response : => %s\n",responseBuffer);
+                        Logger::Info(responseBuffer);
+                        Logger::Info("************************************");
+                        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+                    }
+
+
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
+            // listFiles(cmd[1]);
+        }
+        else if(cmd[0] == "upload_file"){
+            if(cmd.size()>3){
+                Logger::Error("Wrong arguments in 'upload_file'");
+                continue;
+            }
+            // uploadFile(cmd[1]);
+        }
+        else if(cmd[0] == "download_file"){
+            if(cmd.size()>3){
+                Logger::Error("Wrong arguments in 'download_file'");
+                continue;
+            }
+            // download_file(cmd[1]);
+        }
+        else if(cmd[0] == "logout"){
+            if(cmd.size()>1){
+                Logger::Error("Wrong arguments in 'logout'");
+                continue;
+            }
+            // logout(cmd[1]);
+        }
+        else if(cmd[0] == "show_downloads"){
+            if(cmd.size()>1){
+                Logger::Error("Wrong arguments in 'show_downloads'");
+                continue;
+            }
+            // show_downloads(cmd[1]);
+        }
+        else if(cmd[0] == "stop_share"){
+            if(cmd.size()>3){
+                Logger::Error("Wrong arguments in 'stop_share'");
+                continue;
+            }
+            // stop_share(cmd[1]);
+        }
+        else{
+            Logger::Error("Incorrect command entered..!");
+        }
+
+    }
+    
     pthread_join(servingThread, NULL);
     return 0;
 }
