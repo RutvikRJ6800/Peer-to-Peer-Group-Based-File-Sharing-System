@@ -12,8 +12,13 @@
 #include <iostream>
 #include <fstream>
 #include "logger.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <filesystem>
+#include <fcntl.h>
 #define SIZE 6000
 using namespace std;
+using std::ifstream;
 
 // Global Data Structure
 pthread_t servingThread[10];
@@ -27,6 +32,25 @@ bool isLoggedIn = false;
 int port = 6005;
 string ip = "127.1.1.1";
 int client_fd;
+
+class FileInfo{
+    public:
+    string filePath, fileName;
+    long long fileSize;
+
+    FileInfo(){
+
+    }
+
+    FileInfo(string fileP, string fileN, long long fileS){
+        filePath = fileP;
+        fileName = fileN;
+        fileSize = fileS;
+    }
+};
+// gid$filename , FileInfoObject
+unordered_map<string, FileInfo> uploadedFiles;
+
 
 /*##############################################
 split command taken as inp with space separate
@@ -103,44 +127,6 @@ void printVector(vector<string> res){
     }
 }
 
-bool sendFileToPeerClient(string fileName, int socketfd)
-{
-
-    printf("Send file called...\n");
-
-    std::ifstream fp1(fileName);
-
-    char buffer[SIZE] = {0};
-
-    fp1.read(buffer, sizeof(buffer));
-
-    // write(STDOUT_FILENO,buffer,sizeof(buffer));
-
-    send(socketfd, buffer, sizeof(buffer), 0);
-
-    fp1.close();
-
-    return true;
-}
-
-bool recieveFileFromPeerServer(string fileName, int socketfd)
-{
-
-    ofstream myfile(fileName);
-
-    int n;
-
-    char buffer[SIZE] = {0};
-
-    n = read(socketfd, buffer, SIZE);
-
-    myfile.write(buffer, n);
-
-    myfile.close();
-
-    return true;
-}
-
 void *peerServerServing(void *arg)
 {
     int new_socket = *(int *)arg;
@@ -151,27 +137,57 @@ void *peerServerServing(void *arg)
 
         Logger::Info(msg.c_str());
 
-        char buffer[1024] = {0};
-        int fd = *(int *)arg;
 
-        int valread = read(fd, buffer, 1024);
-        printf("%s\n", buffer);
 
-        Logger::Info("*** Recieved Msg ***");
-        Logger::Info(buffer);
+        char INPbuffer[524288] = {0};
 
-        string replyMsg = "This is reply Msg from Peer";
-        char *serverreply = new char[replyMsg.length() + 1];
-        strcpy(serverreply, replyMsg.c_str());
+        int valread = read(new_socket, INPbuffer, 1024);
+        printf("%s\n", INPbuffer);
 
-        send(fd, serverreply, strlen(serverreply), 0);
+        Logger::Info("################Recieved Msg From PEER################");
+        Logger::Info(INPbuffer);
+
+        // check other peer asking file is present or not
+
+        if(uploadedFiles.size()>0 && uploadedFiles.find(string(INPbuffer)) != uploadedFiles.end()){
+            FileInfo f1 = uploadedFiles[string(INPbuffer)];
+            string filePath = f1.fileName;
+
+            int MaxBufferLength = 512;
+
+            int fd = open(uploadedFiles[INPbuffer].filePath.c_str(), O_RDONLY);  
+            char buffer[MaxBufferLength];
+
+            while (1) {
+                // Read data into buffer.  We may not have enough to fill up buffer, so we
+                // store how many bytes were actually read in bytes_read.
+                int bytes_read = read(fd, buffer, sizeof(buffer));
+                if (bytes_read == 0){ // We're done reading from the file
+                    cout<<"Nothing read."<<endl;
+                    break;
+                }
+                else if (bytes_read < 0) {
+                    cout<<"Error in read."<<endl;
+                    break;
+                    // handle errors
+                }
+                else{
+                    write(new_socket, buffer, bytes_read);
+                }
+
+            }
+        }
+        else{
+            Logger::Warn("No such File Present");    
+        }
+        
         Logger::Info("Reply Msg send to client");
 
-        pthread_exit(NULL);
-        return arg;
 
     }
 
+    // pthread_exit(NULL);
+    return arg;
 }
 
 void *createServer(void *param)
@@ -243,40 +259,75 @@ void *createServer(void *param)
     // pthread_exit(NULL);
 }
 
-int establishConnectionWithTracker(){
+int ping_peer(vector<string> cmd){
+    string Dip = cmd[1];
+    string Dport = cmd[2];
 
-    Logger::Info("Establishing connection with tracker");
-
-    int server_fd;
+    int server_fd, fd;
     struct sockaddr_in peer_serv_add;
 
     // creating the socket
-    if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
     {
         printf("\n Socket creation error \n");
         return -1;
     }
 
     peer_serv_add.sin_family = AF_INET;
-    peer_serv_add.sin_port = htons(trackerPort);
+    peer_serv_add.sin_port = htons(stoi(Dport));
     peer_serv_add.sin_addr.s_addr = INADDR_ANY;
 
-    if (inet_pton(AF_INET, trakerrIP.c_str(), &peer_serv_add.sin_addr) <= 0)
+    if (inet_pton(AF_INET, Dip.c_str(), &peer_serv_add.sin_addr) <= 0)
     {
         printf("\nInvalid address/ Address not supported \n");
         return -1;
     }
 
-    if (connect(client_fd, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
+    if (connect(fd, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
     {
         printf("\nConnection Failed \n");
         Logger::Error("Failed to establish connection with tracker.");     
         return -1;
     }
 
-    Logger::Info("connction established with tracker.");
+    Logger::Info("connction established with Peer.");
+    // return 0;
+
+    Logger::Info("DownloadingFile started..... ");
+
+    
+    string s = "give Me the File";
+    if(send(fd, s.c_str(), s.size(), 0) < 0){
+        Logger::Error("Could not send the command.");
+        return -1;
+    }
+    else{
+        Logger::Info("successfully sent fileName to Tracker");
+        // return 0;
+    } 
+
+    char responseBuffer[1024] = {0};
+
+    if(read(fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+        Logger::Error("Couldn't read the response of server / got EOF.");
+        Logger::Info("************************************");
+
+        return 0;
+
+    }
+    else{
+
+        printf("Tracker Response : => %s\n",responseBuffer);
+        Logger::Info(responseBuffer);
+        Logger::Info("************************************");
+        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+        
+    }
     return 0;
+
 }
+
 
 int sendCommandToTracker(string cmd){
     //send command to tracker
@@ -318,6 +369,242 @@ int receiveReplyFromTracker(){
     }
     
     return -1;
+}
+
+
+void uploadFile(vector<string> cmd){
+    // calculate hash
+    // append it at end to send at tracker
+
+    //check file present at given path;
+    // calculate it's file size
+
+    // send strig to tracker (cmd fileName gid fileSize)
+    string FilePath = cmd[1]; // also contain File name in it.
+    string groupId = cmd[2];
+    
+    int idx=FilePath.find_last_of('/');
+    // string ss= FilePath.substr(0,idx);
+    // if(ss=="")ss="/";
+    string fileName=FilePath.substr(idx+1,FilePath.size()-(idx+1));
+    long long fileSize = std::filesystem::file_size(FilePath);
+
+    cout<<"filepath: "<<FilePath<<" fileSize: "<<fileSize<<endl;
+
+    string msg = "";
+    msg += "upload_file "+fileName+" "+groupId+" "+uname+" "+to_string(fileSize);
+
+    sendCommandToTracker(msg);
+
+    char responseBuffer[1024] = {0};
+
+    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+        Logger::Error("Couldn't read the response of server / got EOF.");
+        Logger::Info("************************************");
+    }
+    else if(string(responseBuffer) == "File Successfully Uploaded."){
+
+        printf("Tracker Response : => %s\n",responseBuffer);
+        Logger::Info(responseBuffer);
+        Logger::Info("************************************");
+
+        FileInfo f1 = FileInfo(FilePath, fileName, fileSize);   // store file info into uploaded file map.
+        uploadedFiles[groupId+"$"+fileName] = f1;
+
+        bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+    }
+    
+
+}
+
+int downloadFile(vector<string> cmd){
+    string groupId = cmd[1];
+    string fileName = cmd[2];
+
+    string msg = "download_file";
+    msg += " "+groupId+" "+fileName+" "+uname;
+
+    sendCommandToTracker(msg);
+
+    char responseBuffer[524288] = {0};
+
+    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+
+        Logger::Error("Couldn't read the response of server / got EOF.");
+        Logger::Info("************************************");
+    }
+    else if(string(responseBuffer) == "Error101"){
+
+        printf("Tracker Response : => %s\n","Unable to get details about group.");
+        Logger::Info("Unable to get details about group.");
+        Logger::Info("************************************");
+        return -1;
+
+        // FileInfo f1 = FileInfo(FilePath, fileName, fileSize);   // store file info into uploaded file map.
+        // uploadedFiles[groupId+"$"+fileName] = f1;
+
+        // bzero((char *)&responseBuffer, sizeof(responseBuffer));
+
+    }    
+    else if(string(responseBuffer) == "Error102"){
+        printf("Tracker Response : => %s\n","You are not member of the group");
+        Logger::Info("You are not member of the group");
+        Logger::Info("************************************");
+        return -1;
+    }
+    else if(string(responseBuffer) == "Error103"){
+        printf("Tracker Response : => %s\n","File not present in the group");
+        Logger::Info("File not present in the group");
+        Logger::Info("************************************");
+        return -1;
+    }
+    else{
+        // we found the file details
+        string fileDtls(responseBuffer);
+        printf("Tracker Response : => %s\n",responseBuffer);
+        Logger::Info(responseBuffer);
+
+        vector<string> vec = splitString(fileDtls, '$');
+        long long fileSize = stoi(vec[0]);
+        vector<pair<string,long long>> ips;
+
+        for(size_t i=1; i<vec.size(); i++){
+
+            string sip = vec[i++];
+            long long pt = stoi(vec[i]);
+            ips.push_back(make_pair(sip, pt));
+
+        }
+
+        // print ip and port
+
+        for(size_t i=0; i<ips.size(); i++){
+
+           cout<<"IP: "<<ips[i].first<<" Port: "<<ips[i].second<<endl;
+
+        }
+
+        string sendMsgToPeer = groupId+'$'+fileName;
+        
+        Logger::Warn("File which we want to download is sended to peer");
+        Logger::Info(sendMsgToPeer.c_str());
+
+        int peer_sock;
+        struct sockaddr_in peer_serv_add;
+
+        // creating the socket
+        if ((peer_sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+        {
+            printf("\n Socket creation error \n");
+            return -1;
+        }
+
+        peer_serv_add.sin_family = AF_INET;
+        peer_serv_add.sin_port = htons(ips[0].second);
+        peer_serv_add.sin_addr.s_addr = INADDR_ANY;
+
+        if (inet_pton(AF_INET, ips[0].first.c_str(), &peer_serv_add.sin_addr) <= 0)
+        {
+            printf("\nInvalid address/ Address not supported \n");
+            return -1;
+        }
+
+        if (connect(peer_sock, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
+        {
+            printf("\nConnection Failed \n");
+            return -1;
+        }
+
+        int valread;
+        // char buffer[1024] = {0};
+
+        send(peer_sock, sendMsgToPeer.c_str(), sizeof(sendMsgToPeer), 0);
+
+        // bzero((char *)&buffer, sizeof(buffer));
+
+        // valread = read(peer_sock, buffer, sizeof(buffer));
+        // printf("tracker response : => %s\n", buffer);
+
+        // // close(peer_sock);
+
+        int MaxBufferLength = 512;
+        char buffer[MaxBufferLength];
+        int  bytesRead= 1, bytesSent;
+        int fd = open("aoscopy.pdf",O_CREAT | O_WRONLY,S_IRUSR | S_IWUSR);  
+
+        if(fd == -1)
+            perror("couldn't open file");
+
+        while(bytesRead > 0)
+        {           
+            bytesRead = recv(peer_sock, buffer, MaxBufferLength, 0);
+
+            if(bytesRead == 0)
+            {
+                break;
+            }
+
+            printf("bytes read %d\n", bytesRead);
+
+            printf("receivnig data\n");
+
+            bytesSent = write(fd, buffer, bytesRead);
+
+
+            printf("bytes written %d\n", bytesSent);
+
+            if(bytesSent < 0)
+                perror("Failed to send a message");
+
+        }
+
+        return 0;
+
+
+
+
+
+
+    }
+    return -1; // unexpected error.
+
+}
+
+int establishConnectionWithTracker(){
+
+    Logger::Info("Establishing connection with tracker");
+
+    int server_fd;
+    struct sockaddr_in peer_serv_add;
+
+    // creating the socket
+    if ((client_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+
+    peer_serv_add.sin_family = AF_INET;
+    peer_serv_add.sin_port = htons(trackerPort);
+    peer_serv_add.sin_addr.s_addr = INADDR_ANY;
+
+    if (inet_pton(AF_INET, trakerrIP.c_str(), &peer_serv_add.sin_addr) <= 0)
+    {
+        printf("\nInvalid address/ Address not supported \n");
+        return -1;
+    }
+
+    if (connect(client_fd, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
+    {
+        printf("\nConnection Failed \n");
+        Logger::Error("Failed to establish connection with tracker.");     
+        return -1;
+    }
+
+    Logger::Info("connction established with tracker.");
+    return 0;
 }
 
 int sendMsg()
@@ -600,19 +887,41 @@ int main()
             // listFiles(cmd[1]);
         }
         else if(cmd[0] == "upload_file"){
-            if(cmd.size()>3){
+            if(cmd.size()!=3){
                 Logger::Error("Wrong arguments in 'upload_file'");
                 continue;
             }
-            // uploadFile(cmd[1]);
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                uploadFile(cmd);
+            }
         }
         else if(cmd[0] == "download_file"){
+            if(cmd.size()!=3){
+                Logger::Error("Wrong arguments in 'download_file'");
+                continue;
+            }
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{
+                downloadFile(cmd);
+                
+            }
+        }
+        else if(cmd[0] == "'ping_peer'"){
             if(cmd.size()>3){
                 Logger::Error("Wrong arguments in 'download_file'");
                 continue;
             }
-            // download_file(cmd[1]);
+            ping_peer(cmd);
         }
+
+        
         else if(cmd[0] == "logout"){
             if(cmd.size()>1){
                 Logger::Error("Wrong arguments in 'logout'");

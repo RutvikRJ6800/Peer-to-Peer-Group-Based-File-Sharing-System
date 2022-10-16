@@ -68,14 +68,21 @@ unordered_map<string, GroupInfo> groups;
 class FileInfo{
     public:
     long long fileSize;
-    string sha1;
+    string sha1, fileName;
     vector<string> senders;
 
     FileInfo(){
 
     }
 
-    FileInfo(long long file_size, string sha, vector<string> sendersList){
+    FileInfo(string name,long long file_size, vector<string> sendersList){
+        fileName = name;
+        fileSize = file_size;
+        senders = sendersList;
+    }
+
+    FileInfo(string name,long long file_size, string sha, vector<string> sendersList){
+        fileName = name;
         fileSize = file_size;
         sha1 = sha;
         senders = sendersList;
@@ -96,6 +103,7 @@ void loadDATA(){
     groups["swami"] = g1;
 
     groups["swami"].members.push_back("rj");
+    groups["swami"].members.push_back("jsn");
 
     UserInfo u2 = UserInfo("rj", "", "");
     users["rj"] = u2;
@@ -169,6 +177,11 @@ int loginUser(vector<string> cmd){
         users[cmd[1]].ip = cmd[4];
         users[cmd[1]].port = cmd[5];
         cout<<"ip: "<<users[cmd[1]].ip<<" && port: "<<users[cmd[1]].port<<endl;
+        vector<string> vec;
+        vec.push_back(cmd[4]);
+        vec.push_back(cmd[5]);
+
+        isLoggedIn[cmd[1]] = vec;
         // cout<<"set ip as: "<<users[cmd[1]].ip<<" && port as: "<<users[cmd[1]].port;
         
         return 0;
@@ -355,6 +368,78 @@ string listFiles(vector<string> cmd){
 
     }
     return res;
+}
+
+
+string uploadFile(vector<string> cmd){
+    // cmd:: upload_file(0) fileName(1) gid(2) userId(3) fileSize(4) (SHA) latter
+
+    //first check if user belogs to group or not
+    string fileName = cmd[1];
+    string groupId = cmd[2];
+    string userId = cmd[3];
+    long long fileSize = stoi(cmd[4]);
+
+    if(groups.size()>0 && groups.find(groupId) != groups.end() && 
+    find(groups[groupId].members.begin(), groups[groupId].members.end(), userId) != groups[groupId].members.end() 
+    && files.find(groupId+"$"+fileName) == files.end()){
+
+        //group exist && you are member in group and file not exist in group
+        vector<string> slist;
+        slist.push_back(userId);
+        FileInfo f1 = FileInfo(fileName, fileSize, slist);
+
+        files[groupId+"$"+fileName] = f1;
+
+        Logger::Info("File Successfully Uploaded.");
+
+        return "File Successfully Uploaded.";
+
+    }
+    // else if(files.size()>0 && files.find(groupId+"$"+fileName) != files.end()){
+    //     return "File with same name already exist you are now seeder of that file";
+    // }
+    else{
+        Logger::Info("Maybe Group doesn't exist or you are not member of group or file with same name present in group");
+        return "Maybe Group doesn't exist or you are not member of group or file with same name present in group";
+    }
+    
+}
+
+string downloadFile(vector<string> cmd){
+    string fileName = cmd[2];
+    string groupId = cmd[1];
+    string userId = cmd[3];
+
+    // check if user present in group
+    if(groups.size() == 0 || groups.find(groupId) == groups.end() || groups[groupId].members.size() == 0){
+        return "Error101";// "Unable to get details about group.";
+    }
+    else if(find(groups[groupId].members.begin(), groups[groupId].members.end(), userId) == groups[groupId].members.end()){
+        return "Error102"; // "You are not member of the group";
+    }
+    else if(files.size() > 0 && files.find(groupId+"$"+fileName) == files.end()){
+        return "Error103"; // "File not present in the group";
+    }
+    else{
+        FileInfo f1 = files[groupId+"$"+fileName];
+        string msg = "";
+        msg += to_string(f1.fileSize) + "$";
+
+        vector<string> sendersUname = files[groupId+"$"+fileName].senders;
+
+        for(size_t i=0; i<sendersUname.size(); i++){
+            // if(find(isLoggedIn[sendersUname[i]].begin(), isLoggedIn[sendersUname[i]].end(), sendersUname[i]) != isLoggedIn[sendersUname[i]].end()){
+            if(isLoggedIn.size()>0 && isLoggedIn.find(sendersUname[i]) != isLoggedIn.end()){
+                // if user is alive
+                msg += isLoggedIn[sendersUname[i]][0]+"$"+isLoggedIn[sendersUname[i]][1];
+            }
+        }
+        cout<<"Tracker send msg is:"<<msg<<endl;
+        // msg.pop_back();
+        return msg;
+    }
+    
 }
 
 
@@ -588,17 +673,25 @@ void * serverserving(void * arg){
         }
         
         else if(cmd[0] == "upload_file"){
-            if(cmd.size()>3){
-                Logger::Error("Too many arguments in 'upload_file'");
-            }
-            // uploadFile(cmd[1]);
+
+            string replyMsg;
+            Logger::Info("executing 'upload_file'...");
+            replyMsg = uploadFile(cmd);
+
+            send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
+            Logger::Error("Reply Msg send to client");
+            
         }
         
         else if(cmd[0] == "download_file"){
-            if(cmd.size()>3){
-                Logger::Error("Too many arguments in 'download_file'");
-            }
-            // download_file(cmd[1]);
+
+            string replyMsg;
+            Logger::Info("executing 'upload_file'...");
+            replyMsg = downloadFile(cmd);
+
+            send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
+            Logger::Error("Reply Msg send to client");
+
         }
         else if(cmd[0] == "logout"){
             if(cmd.size()>1){
