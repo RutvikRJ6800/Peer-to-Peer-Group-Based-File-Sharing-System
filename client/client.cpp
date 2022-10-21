@@ -23,6 +23,7 @@ using std::ifstream;
 
 // Global Data Structure
 pthread_t servingThread[100];
+vector<thread> downloadThread;
 int servingThreadIndex = 0;
 pthread_t tid;
 int trackerPort = 7000;
@@ -460,7 +461,7 @@ int receiveReplyFromTracker(){
 }
 
 
-void uploadFile(vector<string> cmd){
+int uploadFile(vector<string> cmd){
     // calculate hash
     // append it at end to send at tracker
 
@@ -490,6 +491,7 @@ void uploadFile(vector<string> cmd){
 
         Logger::Error("Couldn't read the response of server / got EOF.");
         Logger::Info("************************************");
+        return -1;
     }
     else if(string(responseBuffer) == "File Successfully Uploaded."){
 
@@ -507,7 +509,11 @@ void uploadFile(vector<string> cmd){
 
         bzero((char *)&responseBuffer, sizeof(responseBuffer));
 
+        return 0;
+
     }
+
+    return -1;
     
 
 }
@@ -635,12 +641,6 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
 
         // close(peer_sd); // close peer connection.
 
-        cout<<"chunk map at this time:"<<endl;
-
-        for(size_t i=0; i<currDownloadFilechunkMaps.size(); i++){
-            cout<<currDownloadFilechunkMaps[i]<<endl;
-        }
-
         int n, tot = 0;
         char buffer[CHUNKSIZE];
 
@@ -650,6 +650,7 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
         while (tot < CHUNKSIZE) {
             n = read(peer_sd, buffer, CHUNKSIZE-1);
             if (n <= 0){
+                cout<<"break loop for chunkNum: "<<chunkNum<<endl;
                 break;
             }
             buffer[n] = 0;
@@ -666,6 +667,7 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
             tot += n;
             bzero(buffer, CHUNKSIZE);
         }
+        cout<<"[outside] break loop for chunkNum: "<<chunkNum<<endl;
 
     }
 
@@ -789,28 +791,30 @@ int downloadFile(vector<string> cmd){
 
         // print chunkToPeer file
 
-        for(size_t i=0; i<chunkToPeersList.size(); i++){
-            cout<<"chunk No: ";
-            for(size_t j=0; j<chunkToPeersList[i].size(); j++){
-                cout<<chunkToPeersList[i][j]<<", ";
-            }
-            cout<<endl;
-        }
+        // for(size_t i=0; i<chunkToPeersList.size(); i++){
+        //     cout<<"chunk No: ";
+        //     for(size_t j=0; j<chunkToPeersList[i].size(); j++){
+        //         cout<<chunkToPeersList[i][j]<<", ";
+        //     }
+        //     cout<<endl;
+        // }
 
         // // get chunk from peer and add it in file
 
-        FILE* fp = fopen(fileName.c_str(), "r+");
-        if(fp != 0){
+        int fd = open(fileName.c_str(), O_CREAT | O_WRONLY,S_IRUSR | S_IWUSR);
+        if(fd < 0){
             printf("The file already exists.\n") ;
-            fclose(fp);
+            close(fd);
             return -1;
         }
+        close(fd);
 
         vector<thread> getChunkthread;
 
         for(size_t i=0; i<currDownloadFilechunkMaps[0].size(); i++){
 
             int peerNo = rand()%chunkToPeersList[i].size();
+            Logger::Info("downloading chunkNumber: "+to_string(i));
 
             // getChunkthread.push_back(thread(fetchChunkFromPeer, numToIP[peerNo].first, numToIP[peerNo].second, groupId, fileName, i));
             fetchChunkFromPeer(numToIP[peerNo].first, numToIP[peerNo].second, groupId, fileName, i);
@@ -818,7 +822,6 @@ int downloadFile(vector<string> cmd){
 
 
 
-        Logger::Info("File downloaded successfully.");
         // check if the file is corrupted or not
 
         // for (std::thread & th : getChunkthread){
@@ -826,23 +829,12 @@ int downloadFile(vector<string> cmd){
         //     if (th.joinable()) th.join();
         // }
 
+        cout<<"File downloaded successfully."<<endl;
+        Logger::Info("File downloaded successfully.");
 
         return 0;
-        
-
-        
-
-
-
 
         // ###########################################################################
-
-
-
-
-
-
-
 
         /* string sendMsgToPeer = groupId+'$'+fileName;
         
@@ -1021,6 +1013,8 @@ int main()
     if(establishConnectionWithTracker() != 0 ){
         return -1;
     }
+
+    ofstream log_file("logFile.txt", ios_base::out | ios_base::trunc );
 
     // make thread for server running paralelly
     pthread_t servingThread;
@@ -1254,7 +1248,12 @@ int main()
                 continue;
             }
             else{ 
-                uploadFile(cmd);
+                if(uploadFile(cmd) == 0){
+                    cout<<"File Uploaded Successfully"<<endl;
+                }
+                else{
+                    cout<<"Failed to upload File"<<endl;
+                }
             }
         }
         else if(cmd[0] == "download_file"){
@@ -1267,7 +1266,14 @@ int main()
                 continue;
             }
             else{
-                downloadFile(cmd);
+
+                // downloadThread.push_back(thread(downloadFile, cmd));
+                if(downloadFile(cmd) == 0 ){
+                    cout<<"File downloaded successfully"<<endl;
+                }
+                else{
+                    cout<<"Failed to download File"<<endl;
+                }
                 
             }
         }
@@ -1294,15 +1300,21 @@ int main()
             // stop_share(cmd[1]);
         }
         else if(cmd[0]== "qq"){
-            close(client_fd);
-            return 0;
+            break;
+            
         }
         else{
             Logger::Error("Incorrect command entered..!");
         }
 
     }
+
+    // for (std::thread & th : downloadThread){
+    //     // If thread Object is Joinable then Join that thread.
+    //     if (th.joinable()) th.join();
+    // }
     
-    pthread_join(servingThread, NULL);
+    close(client_fd); // close connection of tracker.
+    // pthread_join(servingThread, NULL);
     return 0;
 }
