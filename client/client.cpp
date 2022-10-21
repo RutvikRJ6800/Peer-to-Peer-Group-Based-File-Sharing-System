@@ -22,7 +22,7 @@ using namespace std;
 using std::ifstream;
 
 // Global Data Structure
-pthread_t servingThread[100];
+pthread_t servingThread[5000];
 vector<thread> downloadThread;
 int servingThreadIndex = 0;
 pthread_t tid;
@@ -64,6 +64,7 @@ class FileInfo{
 };
 // gid$filename , FileInfoObject
 unordered_map<string, FileInfo> uploadedFiles;
+unordered_map<string, FileInfo> downloadingFiles;
 
 typedef struct chunkDetails{
     string serverPeerIP;
@@ -275,10 +276,6 @@ void *peerServerServing(void *arg)
         // it asks for chunkDetails
         vector<string> cmd = splitString(INPbuffer, ' ');
 
-        for(size_t r=0; r<cmd.size(); r++){
-            cout<<"idx: "<<r<<"= "<<cmd[r]<<endl;
-        }
-
         if(cmd[0] == "get_chunk_details"){
             // function for sending chunk details (other peer asked).
             string chunkMap = getChunkDetails(cmd);
@@ -386,7 +383,7 @@ void *createServer(void *param)
         exit(EXIT_FAILURE);
     }
 
-    if (listen(server_fd, 100) < 0)
+    if (listen(server_fd, 5000) < 0)
     {
         perror("listen");
         exit(EXIT_FAILURE);
@@ -642,19 +639,34 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
         // close(peer_sd); // close peer connection.
 
         int n, tot = 0;
+        long long reqDataSize;
         char buffer[CHUNKSIZE];
 
         string content = "";
 
+        long long fileSize = downloadingFiles[groupId+'$'+fileName].fileSize;
+        string filePath = downloadingFiles[groupId+'$'+fileName].filePath;
 
-        while (tot < CHUNKSIZE) {
+
+        long long noOfChunks = fileSize / CHUNKSIZE;
+        if(fileSize%CHUNKSIZE != 0)noOfChunks++; // new chunk for rest some data;
+
+        if(chunkNum == noOfChunks-1){
+            reqDataSize = (fileSize % 524288);
+        }
+        else{
+            reqDataSize = 524288;
+        }
+
+
+        while (tot < reqDataSize) {
             n = read(peer_sd, buffer, CHUNKSIZE-1);
             if (n <= 0){
                 cout<<"break loop for chunkNum: "<<chunkNum<<endl;
                 break;
             }
             buffer[n] = 0;
-            fstream outfile(fileName, std::fstream::in | std::fstream::out | std::fstream::binary);
+            fstream outfile(filePath, std::fstream::in | std::fstream::out | std::fstream::binary);
             Logger::Info("Received chunk: "+string(buffer));
             outfile.seekp(chunkNum*CHUNKSIZE+tot, ios::beg);
             outfile.write(buffer, n);
@@ -681,6 +693,7 @@ int downloadFile(vector<string> cmd){
     
     string groupId = cmd[1];
     string fileName = cmd[2];
+    string filePath = cmd[3]+'/'+fileName;
 
     string msg = "download_file";
     msg += " "+groupId+" "+fileName+" "+uname;
@@ -735,6 +748,9 @@ int downloadFile(vector<string> cmd){
 
 
         long long fileSize = stoll(vec[0]);
+        FileInfo f1 = FileInfo(filePath, fileName, fileSize);
+
+        
         vector<pair<string,int>> ips;
 
         for(size_t i=1; i<vec.size(); i++){
@@ -752,6 +768,15 @@ int downloadFile(vector<string> cmd){
            cout<<"IP: "<<ips[i].first<<" Port: "<<ips[i].second<<endl;
 
         }
+        if(ips.size() == 0){
+
+            cout<<"No seeders available for this file.."<<endl;
+            Logger::Error("No seeders available for this file..");
+
+            return -1;
+        }
+        
+        downloadingFiles[groupId+'$'+fileName] = f1;
 
         // ###########################################################################
         vector<thread> getChunkMapthread;
@@ -761,7 +786,7 @@ int downloadFile(vector<string> cmd){
         numToIPIndex = 0;
 
         for(size_t i =0; i<ips.size(); i++){
-            getChunkMapthread.push_back(thread(fetchChunkInfoFromPeer, ips[i].first, ips[i].second, groupId , fileName));
+            getChunkMapthread.push_back(thread(fetchChunkInfoFromPeer, ips[i].first, ips[i].second, groupId , fileName)); // dont use thread here
         }
 
         for (std::thread & th : getChunkMapthread){
@@ -1257,7 +1282,7 @@ int main()
             }
         }
         else if(cmd[0] == "download_file"){
-            if(cmd.size()!=3){
+            if(cmd.size()!=4){
                 Logger::Error("Wrong arguments in 'download_file'");
                 continue;
             }
