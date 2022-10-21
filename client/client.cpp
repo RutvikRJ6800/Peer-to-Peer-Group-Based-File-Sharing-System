@@ -16,12 +16,13 @@
 #include <sys/stat.h>
 #include <filesystem>
 #include <fcntl.h>
-#define SIZE 6000
+#include <thread>
+#define CHUNKSIZE 524288
 using namespace std;
 using std::ifstream;
 
 // Global Data Structure
-pthread_t servingThread[10];
+pthread_t servingThread[100];
 int servingThreadIndex = 0;
 pthread_t tid;
 int trackerPort = 7000;
@@ -32,11 +33,15 @@ bool isLoggedIn = false;
 int port = 6005;
 string ip = "127.1.1.1";
 int client_fd;
+vector<string> currDownloadFilechunkMaps;
+map<int, pair<string, long long>> numToIP;
+size_t numToIPIndex;
 
 class FileInfo{
     public:
     string filePath, fileName;
     long long fileSize;
+    vector<bool> chunkDetails;
 
     FileInfo(){
 
@@ -46,10 +51,25 @@ class FileInfo{
         filePath = fileP;
         fileName = fileN;
         fileSize = fileS;
+
+    }
+
+    FileInfo(string fileP, string fileN, long long fileS, vector<bool> chunkDtl){
+        filePath = fileP;
+        fileName = fileN;
+        fileSize = fileS;
+        chunkDetails = chunkDtl;
     }
 };
 // gid$filename , FileInfoObject
 unordered_map<string, FileInfo> uploadedFiles;
+
+typedef struct chunkDetails{
+    string serverPeerIP;
+    string filename;
+    long long chunkNum; 
+    string destination;
+} chunkDetails;
 
 
 /*##############################################
@@ -102,7 +122,7 @@ vector<string> splitString(string inp, char delim)
     string temp = "";
     for (size_t i = 0; i < inp.size(); i++)
     {
-        if (inp[i] == '$')
+        if (inp[i] == delim)
         {	
 			if(temp.size()>0)
             ans.push_back(temp);
@@ -127,11 +147,113 @@ void printVector(vector<string> res){
     }
 }
 
+string getChunkDetails(vector<string> cmd){
+    // cmd = get_chunk_details gid fileName
+    string gid = cmd[1];
+    string fileName = cmd[2];
+    
+    // check if asked file is preset or not
+    if(uploadedFiles.size()>0 && uploadedFiles.find(gid+'$'+fileName) != uploadedFiles.end()){
+        // file present at this peer;
+        FileInfo f1 = uploadedFiles[gid+'$'+fileName];
+        vector<bool> v = f1.chunkDetails;
+
+        string chunkMap = "";
+        for(size_t i = 0; i<v.size(); i++){
+            if(v[i] == 0)
+                chunkMap += '0';
+            else
+                chunkMap += '1';
+        }
+
+        return chunkMap;
+
+        
+    }
+    else{
+        string res = "";
+        return res;
+    }
+}
+
+int sendChunk(vector<string> cmd, int new_socket){
+    // cmd == get_chunk gid fileName chunkNumber.
+    string gid = cmd[1];
+    string fileName = cmd[2];
+    long long chunkNum = stoll(cmd[3]);
+    
+    // check if asked file is preset or not
+    if(uploadedFiles.size()>0 && uploadedFiles.find(gid+'$'+fileName) != uploadedFiles.end()){
+        // file present at this peer;
+        FileInfo f1 = uploadedFiles[gid+'$'+fileName];
+        vector<bool> v = f1.chunkDetails;
+
+        if(v.size()<=chunkNum){
+            // invalid chunk number;
+            // send error msg
+            string s = "Error301"; // Invalid chunk Number
+            write(new_socket, s.c_str(), s.size());
+            return -1;
+
+        }
+        else if(v[chunkNum] ==  0){
+            // this chunk number is not avalilable
+            string s = "Error302"; // Data for this chunk is not avilable.
+            write(new_socket, s.c_str(), s.size());
+            return -1;
+        }
+        else{
+            // get chunk from the file and send it to user
+            string filePath = f1.filePath;
+
+            // int fd = open(filePath.c_str(), O_RDONLY);  
+            // char buffer[MaxBufferLength];
+
+            // #########################################################
+            std::ifstream fp1(filePath, std::ios::in|std::ios::binary);
+            fp1.seekg(chunkNum*CHUNKSIZE, fp1.beg);
+
+            Logger::Info("sending data starting at " + to_string(fp1.tellg()));
+            char buffer[CHUNKSIZE] = {0}; 
+            int rc = 0;
+
+            fp1.read(buffer, sizeof(buffer));
+            int count = fp1.gcount();
+
+            Logger::Info("Data read count: "+to_string(count));
+            Logger::Info("Data is: "+string(buffer));
+
+            if ((rc = send(new_socket, buffer, count, 0)) == -1) {
+                // write(new_socket, chunkMap.c_str(), chunkMap.size()); here send is used instead of write.
+                perror("[-]Error in sending file.");
+                exit(1);
+            }
+            
+            Logger::Info("sent till "+to_string(fp1.tellg()));
+
+
+            fp1.close();
+            return 0;
+
+        }
+
+        
+    }
+    else{
+        // no such file present at the peer side.
+        string s = "Error303"; // No such file present.
+        write(new_socket, s.c_str(), s.size());
+        return -1;    
+
+
+    }
+}
+
 void *peerServerServing(void *arg)
 {
     int new_socket = *(int *)arg;
 
-    while(1){
+    // while(1){
 
         string msg = "Peer started servicing."+to_string(new_socket);
 
@@ -147,47 +269,82 @@ void *peerServerServing(void *arg)
         Logger::Info("################Recieved Msg From PEER################");
         Logger::Info(INPbuffer);
 
+        // check if other peer is asking for chunk or chunk map(chunkDetails of file).
+
+        // it asks for chunkDetails
+        vector<string> cmd = splitString(INPbuffer, ' ');
+
+        for(size_t r=0; r<cmd.size(); r++){
+            cout<<"idx: "<<r<<"= "<<cmd[r]<<endl;
+        }
+
+        if(cmd[0] == "get_chunk_details"){
+            // function for sending chunk details (other peer asked).
+            string chunkMap = getChunkDetails(cmd);
+
+            write(new_socket, chunkMap.c_str(), chunkMap.size());
+            Logger::Info("chunk vector of file: "+cmd[2]+" is: "+chunkMap);
+
+        }
+
+        else if(cmd[0] == "get_chunk"){
+
+
+            // thread *th = new thread(sendChunk, cmd, new_socket); 
+            // thread removed temporaryly
+            sendChunk(cmd, new_socket);
+        }
+
+        else{
+            string s = "Erorr201";
+            write(new_socket, s.c_str(), s.size()); //Invalid command reached at Peer server
+        }
+
+
+
+        pthread_exit(NULL);
+        return arg;
+
         // check other peer asking file is present or not
 
-        if(uploadedFiles.size()>0 && uploadedFiles.find(string(INPbuffer)) != uploadedFiles.end()){
-            FileInfo f1 = uploadedFiles[string(INPbuffer)];
-            string filePath = f1.fileName;
+        // if(uploadedFiles.size()>0 && uploadedFiles.find(string(INPbuffer)) != uploadedFiles.end()){
+        //     FileInfo f1 = uploadedFiles[string(INPbuffer)];
+        //     string filePath = f1.fileName;
 
-            int MaxBufferLength = 512;
+        //     int MaxBufferLength = 512;
 
-            int fd = open(uploadedFiles[INPbuffer].filePath.c_str(), O_RDONLY);  
-            char buffer[MaxBufferLength];
+        //     int fd = open(uploadedFiles[INPbuffer].filePath.c_str(), O_RDONLY);  
+        //     char buffer[MaxBufferLength];
 
-            while (1) {
-                // Read data into buffer.  We may not have enough to fill up buffer, so we
-                // store how many bytes were actually read in bytes_read.
-                int bytes_read = read(fd, buffer, sizeof(buffer));
-                if (bytes_read == 0){ // We're done reading from the file
-                    cout<<"Nothing read."<<endl;
-                    break;
-                }
-                else if (bytes_read < 0) {
-                    cout<<"Error in read."<<endl;
-                    break;
-                    // handle errors
-                }
-                else{
-                    write(new_socket, buffer, bytes_read);
-                }
+        //     while (1) {
+        //         // Read data into buffer.  We may not have enough to fill up buffer, so we
+        //         // store how many bytes were actually read in bytes_read.
+        //         int bytes_read = read(fd, buffer, sizeof(buffer));
+        //         if (bytes_read <= 0){ // We're done reading from the file
+        //             cout<<"Nothing read."<<endl;
+        //             break;
+        //         }
+        //         else if (bytes_read < 0) {
+        //             cout<<"Error in read."<<endl;
+        //             break;
+        //             // handle errors
+        //         }
+        //         else{
+        //             write(new_socket, buffer, bytes_read);
+        //         }
 
-            }
-        }
-        else{
-            Logger::Warn("No such File Present");    
-        }
+        //     }
+        // }
+        // else{
+        //     Logger::Warn("No such File Present at peer");    
+        // }
         
-        Logger::Info("Reply Msg send to client");
+        // Logger::Info("Reply Msg send to client");
 
 
-    }
+    // }
 
-    // pthread_exit(NULL);
-    return arg;
+    
 }
 
 void *createServer(void *param)
@@ -228,7 +385,7 @@ void *createServer(void *param)
         exit(EXIT_FAILURE);
     }
 
-    if (listen(server_fd, 10) < 0)
+    if (listen(server_fd, 100) < 0)
     {
         perror("listen");
         exit(EXIT_FAILURE);
@@ -257,75 +414,6 @@ void *createServer(void *param)
     // shutdown(server_fd, SHUT_RDWR);
 
     // pthread_exit(NULL);
-}
-
-int ping_peer(vector<string> cmd){
-    string Dip = cmd[1];
-    string Dport = cmd[2];
-
-    int server_fd, fd;
-    struct sockaddr_in peer_serv_add;
-
-    // creating the socket
-    if ((fd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-    {
-        printf("\n Socket creation error \n");
-        return -1;
-    }
-
-    peer_serv_add.sin_family = AF_INET;
-    peer_serv_add.sin_port = htons(stoi(Dport));
-    peer_serv_add.sin_addr.s_addr = INADDR_ANY;
-
-    if (inet_pton(AF_INET, Dip.c_str(), &peer_serv_add.sin_addr) <= 0)
-    {
-        printf("\nInvalid address/ Address not supported \n");
-        return -1;
-    }
-
-    if (connect(fd, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
-    {
-        printf("\nConnection Failed \n");
-        Logger::Error("Failed to establish connection with tracker.");     
-        return -1;
-    }
-
-    Logger::Info("connction established with Peer.");
-    // return 0;
-
-    Logger::Info("DownloadingFile started..... ");
-
-    
-    string s = "give Me the File";
-    if(send(fd, s.c_str(), s.size(), 0) < 0){
-        Logger::Error("Could not send the command.");
-        return -1;
-    }
-    else{
-        Logger::Info("successfully sent fileName to Tracker");
-        // return 0;
-    } 
-
-    char responseBuffer[1024] = {0};
-
-    if(read(fd, responseBuffer, sizeof(responseBuffer))<=0){
-
-        Logger::Error("Couldn't read the response of server / got EOF.");
-        Logger::Info("************************************");
-
-        return 0;
-
-    }
-    else{
-
-        printf("Tracker Response : => %s\n",responseBuffer);
-        Logger::Info(responseBuffer);
-        Logger::Info("************************************");
-        bzero((char *)&responseBuffer, sizeof(responseBuffer));
-        
-    }
-    return 0;
-
 }
 
 
@@ -409,7 +497,12 @@ void uploadFile(vector<string> cmd){
         Logger::Info(responseBuffer);
         Logger::Info("************************************");
 
-        FileInfo f1 = FileInfo(FilePath, fileName, fileSize);   // store file info into uploaded file map.
+        long long noOfChunks = fileSize / CHUNKSIZE;
+        if(fileSize%CHUNKSIZE != 0)noOfChunks++; // new chunk for rest some data;
+
+        vector<bool> chunkDtl(noOfChunks, 1); 
+
+        FileInfo f1 = FileInfo(FilePath, fileName, fileSize, chunkDtl);   // store file info into uploaded file map.
         uploadedFiles[groupId+"$"+fileName] = f1;
 
         bzero((char *)&responseBuffer, sizeof(responseBuffer));
@@ -419,7 +512,171 @@ void uploadFile(vector<string> cmd){
 
 }
 
+int fetchChunkInfoFromPeer(string peerIp, int peerPort, string groupId , string fileName){
+    
+    Logger::Info("fetching chunk details from peer: "+peerIp);
+
+    int peer_sd;  
+    struct sockaddr_in peer_serv_add;
+
+    // creating the socket
+    if ((peer_sd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+
+    peer_serv_add.sin_family = AF_INET;
+    peer_serv_add.sin_port = htons(peerPort);
+    peer_serv_add.sin_addr.s_addr = INADDR_ANY;
+
+    if (inet_pton(AF_INET, peerIp.c_str(), &peer_serv_add.sin_addr) <= 0)
+    {
+        printf("\nInvalid address/ Address not supported \n");
+    }
+
+    if (connect(peer_sd, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
+    {
+        printf("\nConnection Failed \n");
+        Logger::Error("Failed to establish connection with peer: "+peerIp);     
+    }
+
+    Logger::Info("connction established with peer: "+peerIp);
+
+    string command = "get_chunk_details "+groupId+" "+fileName;
+
+    send(peer_sd, command.c_str(), command.size(), 0);
+    
+    Logger::Info("command: "+command+". sent to peer: "+peerIp);
+
+    char responseBuffer[524288] = {0};
+
+    read(peer_sd, responseBuffer, sizeof(responseBuffer));
+
+    Logger::Info("Received chunk details as: "+string(responseBuffer));
+
+    currDownloadFilechunkMaps.push_back(string(responseBuffer));
+    numToIP[numToIPIndex++] = make_pair(peerIp, peerPort);
+    
+
+    close(peer_sd); // close peer connection.
+
+    cout<<"chunk map at this time:"<<endl;
+
+    for(size_t i=0; i<currDownloadFilechunkMaps.size(); i++){
+        cout<<currDownloadFilechunkMaps[i]<<endl;
+    }
+
+
+    return 0;
+    
+}
+
+int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileName, int chunkNum){
+    
+    Logger::Info("fetching chunk num "+to_string(chunkNum)+" from peer: "+peerIp);
+
+    int peer_sd;  
+    struct sockaddr_in peer_serv_add;
+
+    // creating the socket
+    if ((peer_sd = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        printf("\n Socket creation error \n");
+        return -1;
+    }
+
+    peer_serv_add.sin_family = AF_INET;
+    peer_serv_add.sin_port = htons(peerPort);
+    peer_serv_add.sin_addr.s_addr = INADDR_ANY;
+
+    if (inet_pton(AF_INET, peerIp.c_str(), &peer_serv_add.sin_addr) <= 0)
+    {
+        printf("\nInvalid address/ Address not supported \n");
+    }
+
+    if (connect(peer_sd, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
+    {
+        printf("\nConnection Failed \n");
+        Logger::Error("Failed to establish connection with peer: "+peerIp);     
+    }
+
+    Logger::Info("connction established with peer: "+peerIp);
+
+    string command = "get_chunk "+groupId+" "+fileName+" "+to_string(chunkNum);
+
+    send(peer_sd, command.c_str(), command.size(), 0);
+    
+    Logger::Info("command: "+command+". sent to peer: "+peerIp);
+
+    char responseBuffer[524288] = {0};
+
+    // read(peer_sd, responseBuffer, sizeof(responseBuffer));
+
+    if(string(responseBuffer) == "Error301"){
+        Logger::Info("Invalid chunk Number");
+        cout<<"Invalid chunk Number"<<endl;
+        return -1;
+    }
+    else if(string(responseBuffer) == "Error302"){
+        Logger::Info("Data for this chunk is not avilable.");
+        cout<<"Data for this chunk is not avilable."<<endl;
+        return -1;
+    }
+    else if(string(responseBuffer) == "Error303"){
+        Logger::Info("No such file present.");
+        cout<<"No such file present."<<endl;
+        return -1;
+    }
+    else{
+
+        // Logger::Info("Received chunk: "+string(responseBuffer));
+        
+
+        // close(peer_sd); // close peer connection.
+
+        cout<<"chunk map at this time:"<<endl;
+
+        for(size_t i=0; i<currDownloadFilechunkMaps.size(); i++){
+            cout<<currDownloadFilechunkMaps[i]<<endl;
+        }
+
+        int n, tot = 0;
+        char buffer[CHUNKSIZE];
+
+        string content = "";
+
+
+        while (tot < CHUNKSIZE) {
+            n = read(peer_sd, buffer, CHUNKSIZE-1);
+            if (n <= 0){
+                break;
+            }
+            buffer[n] = 0;
+            fstream outfile(fileName, std::fstream::in | std::fstream::out | std::fstream::binary);
+            Logger::Info("Received chunk: "+string(buffer));
+            outfile.seekp(chunkNum*CHUNKSIZE+tot, ios::beg);
+            outfile.write(buffer, n);
+            outfile.close();
+
+            Logger::Info("written at: "+ to_string(chunkNum*CHUNKSIZE + tot));
+            Logger::Info("written till: " + to_string(chunkNum*CHUNKSIZE + tot + n-1) +"\n");
+
+            content += buffer;
+            tot += n;
+            bzero(buffer, CHUNKSIZE);
+        }
+
+    }
+
+    close(peer_sd); // close peer connection.
+
+    return 0;
+    
+}
+
 int downloadFile(vector<string> cmd){
+    
     string groupId = cmd[1];
     string fileName = cmd[2];
 
@@ -467,26 +724,127 @@ int downloadFile(vector<string> cmd){
         Logger::Info(responseBuffer);
 
         vector<string> vec = splitString(fileDtls, '$');
-        long long fileSize = stoi(vec[0]);
-        vector<pair<string,long long>> ips;
+        if(vec.size()<=2){ // file present in group but no seeders or leechers available.
+            cout<<"No seeders or leercher found. Hence download incomplete."<<endl;
+            Logger::Error("No seeders or leercher found.");
+            Logger::Error("Download Incomplete");
+            return -1;
+        }
+
+
+        long long fileSize = stoll(vec[0]);
+        vector<pair<string,int>> ips;
 
         for(size_t i=1; i<vec.size(); i++){
 
             string sip = vec[i++];
-            long long pt = stoi(vec[i]);
+            int pt = stoi(vec[i]);
             ips.push_back(make_pair(sip, pt));
 
         }
 
         // print ip and port
-
+        cout<<"IP and port of Seeders or leechers"<<endl;
         for(size_t i=0; i<ips.size(); i++){
 
            cout<<"IP: "<<ips[i].first<<" Port: "<<ips[i].second<<endl;
 
         }
 
-        string sendMsgToPeer = groupId+'$'+fileName;
+        // ###########################################################################
+        vector<thread> getChunkMapthread;
+
+        currDownloadFilechunkMaps.clear();
+        numToIP.clear();
+        numToIPIndex = 0;
+
+        for(size_t i =0; i<ips.size(); i++){
+            getChunkMapthread.push_back(thread(fetchChunkInfoFromPeer, ips[i].first, ips[i].second, groupId , fileName));
+        }
+
+        for (std::thread & th : getChunkMapthread){
+            // If thread Object is Joinable then Join that thread.
+            if (th.joinable()) th.join();
+        }
+
+        // print chunkMap;
+
+        cout<<"chunk received... chunks are."<<endl;
+        for(size_t i=0; i<currDownloadFilechunkMaps.size(); i++){
+            cout<<currDownloadFilechunkMaps[i]<<endl;
+        }
+
+        vector<vector<int>> chunkToPeersList(currDownloadFilechunkMaps[0].size());
+
+
+        for(size_t i=0; i<currDownloadFilechunkMaps[0].size(); i++){
+
+            for(size_t j=0; j<currDownloadFilechunkMaps.size(); j++){
+                if(currDownloadFilechunkMaps[j][i] == '1'){
+                    chunkToPeersList[i].push_back(j);
+                }
+            }
+
+        }
+
+        // print chunkToPeer file
+
+        for(size_t i=0; i<chunkToPeersList.size(); i++){
+            cout<<"chunk No: ";
+            for(size_t j=0; j<chunkToPeersList[i].size(); j++){
+                cout<<chunkToPeersList[i][j]<<", ";
+            }
+            cout<<endl;
+        }
+
+        // // get chunk from peer and add it in file
+
+        FILE* fp = fopen(fileName.c_str(), "r+");
+        if(fp != 0){
+            printf("The file already exists.\n") ;
+            fclose(fp);
+            return -1;
+        }
+
+        vector<thread> getChunkthread;
+
+        for(size_t i=0; i<currDownloadFilechunkMaps[0].size(); i++){
+
+            int peerNo = rand()%chunkToPeersList[i].size();
+
+            // getChunkthread.push_back(thread(fetchChunkFromPeer, numToIP[peerNo].first, numToIP[peerNo].second, groupId, fileName, i));
+            fetchChunkFromPeer(numToIP[peerNo].first, numToIP[peerNo].second, groupId, fileName, i);
+        }
+
+
+
+        Logger::Info("File downloaded successfully.");
+        // check if the file is corrupted or not
+
+        // for (std::thread & th : getChunkthread){
+        //     // If thread Object is Joinable then Join that thread.
+        //     if (th.joinable()) th.join();
+        // }
+
+
+        return 0;
+        
+
+        
+
+
+
+
+        // ###########################################################################
+
+
+
+
+
+
+
+
+        /* string sendMsgToPeer = groupId+'$'+fileName;
         
         Logger::Warn("File which we want to download is sended to peer");
         Logger::Info(sendMsgToPeer.c_str());
@@ -529,10 +887,10 @@ int downloadFile(vector<string> cmd){
 
         // // close(peer_sock);
 
-        int MaxBufferLength = 512;
+        int MaxBufferLength = 524288;
         char buffer[MaxBufferLength];
         int  bytesRead= 1, bytesSent;
-        int fd = open("aoscopy.pdf",O_CREAT | O_WRONLY,S_IRUSR | S_IWUSR);  
+        int fd = open(fileName.c_str(),O_CREAT | O_WRONLY,S_IRUSR | S_IWUSR);  
 
         if(fd == -1)
             perror("couldn't open file");
@@ -561,7 +919,7 @@ int downloadFile(vector<string> cmd){
         }
 
         return 0;
-
+ */
 
 
 
@@ -913,14 +1271,6 @@ int main()
                 
             }
         }
-        else if(cmd[0] == "'ping_peer'"){
-            if(cmd.size()>3){
-                Logger::Error("Wrong arguments in 'download_file'");
-                continue;
-            }
-            ping_peer(cmd);
-        }
-
         
         else if(cmd[0] == "logout"){
             if(cmd.size()>1){
