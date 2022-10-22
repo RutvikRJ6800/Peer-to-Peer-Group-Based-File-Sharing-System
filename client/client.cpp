@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <thread>
+#include <openssl/sha.h> 
 #define CHUNKSIZE 524288
 using namespace std;
 using std::ifstream;
@@ -25,13 +26,13 @@ pthread_t servingThread[5000];
 vector<thread> downloadThread;
 int servingThreadIndex = 0;
 pthread_t tid;
-int trackerPort = 7000;
-string trakerrIP = "127.1.2.1";
+int trackerPort;
+string trakerrIP;
 
 string uname = "";
 bool isLoggedIn = false;
-int port = 6005;
-string ip = "127.1.1.1";
+int port;
+string ip;
 int client_fd;
 
 
@@ -140,6 +141,81 @@ long long getFileSize(string path){
     std::ifstream in(path.c_str(), std::ifstream::ate | std::ifstream::binary);
     return in.tellg(); 
 
+}
+
+string calculateHashofchunk(char *schunk, int length1, int shorthashflag){
+
+    unsigned char hash[SHA_DIGEST_LENGTH];
+    char buf[SHA_DIGEST_LENGTH * 2];
+    SHA1((unsigned char *)schunk, length1, hash);
+
+    for (int i = 0; i < SHA_DIGEST_LENGTH; i++)
+        sprintf((char *)&(buf[i * 2]), "%02x", hash[i]);
+
+    //cout<<"hash : "<<buf<<endl;
+    string ans;
+    if (shorthashflag == 1)
+    {
+        for (int i = 0; i < 20; i++)
+        {
+            ans += buf[i];
+        }
+    }
+    else
+    {
+        for (int i = 0; i < SHA_DIGEST_LENGTH * 2; i++)
+        {
+            ans += buf[i];
+        }
+    }
+    return ans;
+}
+
+string calculateFileHash(char *path){
+    string fileHash;
+    ifstream file1(path, ifstream::binary);
+
+    /* basic sanity check */
+    if (!file1)
+    {
+        cout << "FILE DOES NOT EXITST : " << string(path) << endl;
+        return "-1";
+    }
+
+    struct stat fstatus;
+    stat(path, &fstatus);
+
+    // Logic for deviding file1 into chunks
+    long int total_size = fstatus.st_size;
+    long int chunk_size = CHUNKSIZE;
+
+    int total_chunks = total_size / chunk_size;
+    int last_chunk_size = total_size % chunk_size;
+
+    if (last_chunk_size != 0){
+        ++total_chunks;
+    }
+    else {
+        last_chunk_size = chunk_size;
+    }
+
+    // loop to getting each chunk
+    for (int chunk = 0; chunk < total_chunks; ++chunk)
+    {
+        int cur_cnk_size;
+        if (chunk == total_chunks - 1)
+            cur_cnk_size = last_chunk_size;
+        else
+            cur_cnk_size = chunk_size;
+
+        char *chunk_data = new char[cur_cnk_size];
+        file1.read(chunk_data, cur_cnk_size); /* this many bytes is to be read */
+
+        string sh1out = calculateHashofchunk(chunk_data, cur_cnk_size, 1);
+        fileHash = fileHash + sh1out;
+    }
+
+    return fileHash;
 }
 
 void printVector(vector<string> res){
@@ -256,7 +332,7 @@ void *peerServerServing(void *arg)
 
     // while(1){
 
-        string msg = "Peer started servicing."+to_string(new_socket);
+        string msg = "Peer "+ip+':'+to_string(port)+" started servicing."+to_string(new_socket);
 
         Logger::Info(msg.c_str());
 
@@ -264,8 +340,8 @@ void *peerServerServing(void *arg)
 
         char INPbuffer[524288] = {0};
 
-        int valread = read(new_socket, INPbuffer, 1024);
-        printf("%s\n", INPbuffer);
+        int valread = read(new_socket, INPbuffer, 524288);
+        // printf("%s\n", INPbuffer);
 
         Logger::Info("################Recieved Msg From PEER################");
         Logger::Info(INPbuffer);
@@ -311,7 +387,7 @@ void *createServer(void *param)
     //    int serverPort = 7000;
     //    string serverIP = "127.1.1.1";
 
-    cout<<"[WARN] create server executing..."<<endl;
+    cout<<"[INFO] create server executing..."<<endl;
 
     int server_fd;
     struct sockaddr_in address;
@@ -394,7 +470,7 @@ int sendCommandToTracker(string cmd){
 
 int receiveReplyFromTracker(){
 
-    char responseBuffer[1024] = {0};
+    char responseBuffer[524288] = {0};
 
     if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
 
@@ -418,8 +494,6 @@ int receiveReplyFromTracker(){
 
 
 int uploadFile(vector<string> cmd){
-    // calculate hash
-    // append it at end to send at tracker
 
     //check file present at given path;
     // calculate it's file size
@@ -438,12 +512,21 @@ int uploadFile(vector<string> cmd){
 
     cout<<"filepath: "<<FilePath<<" fileSize: "<<fileSize<<endl;
 
+    // calculate hash
+    // append it at end to send at tracker
+    string hofpath = FilePath;
+    char *longhash = new char[hofpath.length() + 1];
+    strcpy(longhash, hofpath.c_str());
+    string hashOfFile = calculateFileHash(longhash);
+
+    Logger::Info(hashOfFile);
+
     string msg = "";
-    msg += "upload_file "+fileName+" "+groupId+" "+uname+" "+to_string(fileSize);
+    msg += "upload_file "+fileName+" "+groupId+" "+uname+" "+to_string(fileSize)+" "+hashOfFile;
 
     sendCommandToTracker(msg);
 
-    char responseBuffer[1024] = {0};
+    char responseBuffer[524288] = {0};
 
     if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
 
@@ -536,7 +619,7 @@ int fetchChunkInfoFromPeer(string peerIp, int peerPort, string groupId , string 
     
 }
 
-int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileName, int chunkNum){
+int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileName, int chunkNum, string thisChunkHash){
     
     Logger::Info("fetching chunk num "+to_string(chunkNum)+" from peer: "+peerIp);
 
@@ -602,6 +685,8 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
         int n, tot = 0;
         long long reqDataSize;
         char buffer[CHUNKSIZE];
+        char buffForSHA[CHUNKSIZE];
+        long long  bFS = 0;
 
         string content = "";
 
@@ -627,6 +712,11 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
                 cout<<"break loop for chunkNum: "<<chunkNum<<endl;
                 break;
             }
+
+            for(long long m=0; m<n; m++){
+                buffForSHA[bFS++] = buffer[m];
+            }
+
             buffer[n] = 0;
             fstream outfile(filePath, std::fstream::in | std::fstream::out | std::fstream::binary);
             Logger::Info("Received chunk: "+string(buffer));
@@ -642,10 +732,18 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
             bzero(buffer, CHUNKSIZE);
         }
 
+    
+        string calcThisChunkHash = calculateHashofchunk(buffForSHA, reqDataSize, 1);
+
+        Logger::Info("[SHA1] Original Hash: "+thisChunkHash+" calculated Hash: "+calcThisChunkHash);
+        if(thisChunkHash != calcThisChunkHash){
+            Logger::Error("SHA1 doesn't match for chunk no. "+to_string(chunkNum));
+            return -1;
+        }
 
         cout<<"[outside] break loop for chunkNum: "<<chunkNum<<endl;
         if(uploadedFiles.find(groupId+'$'+fileName) == uploadedFiles.end()){
-            cout<<"[DEBUG] First chunk of file recieved."<<endl;
+            // cout<<"[DEBUG] First chunk of file recieved."<<endl;
             // first time its uploadeing.
             vector<bool> cm(noOfChunks, 0);
             cm[chunkNum] = 1;
@@ -732,12 +830,18 @@ int downloadFile(vector<string> cmd){
 
 
         long long fileSize = stoll(vec[0]);
+        string shaone = vec[1];
+
+        long long noOfChunks = fileSize / CHUNKSIZE;
+        if(fileSize%CHUNKSIZE != 0)noOfChunks++;
+
+
         FileInfo f1 = FileInfo(filePath, fileName, fileSize);
 
         
         vector<pair<string,int>> ips;
 
-        for(size_t i=1; i<vec.size(); i++){
+        for(size_t i=2; i<vec.size(); i++){
 
             string sip = vec[i++];
             int pt = stoi(vec[i]);
@@ -777,11 +881,6 @@ int downloadFile(vector<string> cmd){
             fetchChunkInfoFromPeer(ips[i].first, ips[i].second, groupId , fileName, currDownloadFilechunkMaps, numToIP, i); // dont use thread here
         }
 
-        // for (std::thread & th : getChunkMapthread){
-        //     // If thread Object is Joinable then Join that thread.
-        //     if (th.joinable()) th.join();
-        // }
-
         // print chunkMap;
 
         cout<<"chunk received... chunks are."<<endl;
@@ -814,7 +913,7 @@ int downloadFile(vector<string> cmd){
 
         // // get chunk from peer and add it in file
 
-        int fd = open(fileName.c_str(), O_CREAT | O_WRONLY,S_IRUSR | S_IWUSR);
+        int fd = open(fileName.c_str(), O_CREAT | O_WRONLY, S_IRWXU);
         if(fd < 0){
             printf("The file already exists.\n") ;
             close(fd);
@@ -823,14 +922,37 @@ int downloadFile(vector<string> cmd){
         close(fd);
 
         vector<thread> getChunkthread;
+        vector<string> chunkHash;
+
+        for(size_t i=0; i<noOfChunks; i++){
+            size_t offst = i*20;
+            string chunkSha = "";
+            for(size_t j=0; j<20; j++){
+                chunkSha += shaone[offst+j];
+            }
+            chunkHash.push_back(chunkSha);
+        }
+
+        int res = 0;
 
         for(size_t i=0; i<currDownloadFilechunkMaps[0].size(); i++){
 
             int peerNo = rand()%chunkToPeersList[i].size();
             Logger::Info("downloading chunkNumber: "+to_string(i));
-
+            
             // getChunkthread.push_back(thread(fetchChunkFromPeer, numToIP[peerNo].first, numToIP[peerNo].second, groupId, fileName, i));
-            fetchChunkFromPeer(numToIP[peerNo].first, numToIP[peerNo].second, groupId, fileName, i);
+            string thisChunkHash = chunkHash[i];
+            res += fetchChunkFromPeer(numToIP[peerNo].first, numToIP[peerNo].second, groupId, fileName, i, thisChunkHash);
+        }
+
+        if(res<0){
+
+            cout<<"File Downloaded Successfully, but found corrupted."<<endl;
+            Logger::Error("File Downloaded Successfully, but found corrupted.");
+
+        }
+        else{
+            Logger::Info("File downloaded successfully. No corruption found.");
         }
         // for(size_t i=currDownloadFilechunkMaps[0].size()-1; i>=0; i--){
 
@@ -850,96 +972,12 @@ int downloadFile(vector<string> cmd){
         //     if (th.joinable()) th.join();
         // }
 
-        cout<<"File downloaded successfully."<<endl;
-        Logger::Info("File downloaded successfully.");
+        
         
         downloadingFiles.erase(groupId+'$'+fileName); // delete file from downloading list map
         downloadCompletedFiles.push_back(make_pair(groupId, fileName)); // add file into completed map
 
         return 0;
-
-        // ###########################################################################
-
-        /* string sendMsgToPeer = groupId+'$'+fileName;
-        
-        Logger::Warn("File which we want to download is sended to peer");
-        Logger::Info(sendMsgToPeer.c_str());
-
-        int peer_sock;
-        struct sockaddr_in peer_serv_add;
-
-        // creating the socket
-        if ((peer_sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
-        {
-            printf("\n Socket creation error \n");
-            return -1;
-        }
-
-        peer_serv_add.sin_family = AF_INET;
-        peer_serv_add.sin_port = htons(ips[0].second);
-        peer_serv_add.sin_addr.s_addr = INADDR_ANY;
-
-        if (inet_pton(AF_INET, ips[0].first.c_str(), &peer_serv_add.sin_addr) <= 0)
-        {
-            printf("\nInvalid address/ Address not supported \n");
-            return -1;
-        }
-
-        if (connect(peer_sock, (struct sockaddr *)&peer_serv_add, sizeof(peer_serv_add)) < 0)
-        {
-            printf("\nConnection Failed \n");
-            return -1;
-        }
-
-        int valread;
-        // char buffer[1024] = {0};
-
-        send(peer_sock, sendMsgToPeer.c_str(), sizeof(sendMsgToPeer), 0);
-
-        // bzero((char *)&buffer, sizeof(buffer));
-
-        // valread = read(peer_sock, buffer, sizeof(buffer));
-        // printf("tracker response : => %s\n", buffer);
-
-        // // close(peer_sock);
-
-        int MaxBufferLength = 524288;
-        char buffer[MaxBufferLength];
-        int  bytesRead= 1, bytesSent;
-        int fd = open(fileName.c_str(),O_CREAT | O_WRONLY,S_IRUSR | S_IWUSR);  
-
-        if(fd == -1)
-            perror("couldn't open file");
-
-        while(bytesRead > 0)
-        {           
-            bytesRead = recv(peer_sock, buffer, MaxBufferLength, 0);
-
-            if(bytesRead == 0)
-            {
-                break;
-            }
-
-            printf("bytes read %d\n", bytesRead);
-
-            printf("receivnig data\n");
-
-            bytesSent = write(fd, buffer, bytesRead);
-
-
-            printf("bytes written %d\n", bytesSent);
-
-            if(bytesSent < 0)
-                perror("Failed to send a message");
-
-        }
-
-        return 0;
- */
-
-
-
-
 
     }
     return -1; // unexpected error.
@@ -992,11 +1030,37 @@ void showDownload(){
     }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     // Logger::EnableFileOutput();
 
-    Logger::Info("Client 1 start executing.");
+    if(argc != 3){
+        cout<<"Wrong number of arguments passed.!"<<endl;
+        return -1;
+    }
+
+    vector<string> ipp = splitString(argv[1], ':');
+    ip = ipp[0], port =stoi(ipp[1]);
+
+    ifstream tinfo;
+    tinfo.open(argv[2]);
+
+    string sLine;
+    if(!tinfo.eof()){
+        tinfo >> sLine;
+    }
+    else{
+        cout<<"Couldn't read data from tracker file."<<endl;
+        return -1;
+    }
+
+    vector<string> tripp = splitString(sLine, ':');
+    trakerrIP = tripp[0], trackerPort =stoi(tripp[1]);
+
+    
+    
+
+    Logger::Info("Client "+ip+':'+to_string(port)+" start executing.");
     
     if(establishConnectionWithTracker() != 0 ){
         return -1;
@@ -1050,7 +1114,7 @@ int main()
             else{
                 cmdStr += " "+uname+" "+ip+" "+to_string(port);
                 if(sendCommandToTracker(cmdStr) == 0){
-                    char resBuff[1024];
+                    char resBuff[524288];
                     read(client_fd, resBuff, sizeof(resBuff));
                     if(string(resBuff) == "Failed"){
                         Logger::Error("Unsucessful login");
@@ -1200,7 +1264,19 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    receiveReplyFromTracker();
+                    
+                    char responseBuffer[1024*512] = {0};
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+                        return 0;
+                    }
+                    else{
+                        
+                        string response(responseBuffer);
+                        vector<string> res = splitString(response, '$');
+                        printVector(res);
+                    }
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -1220,7 +1296,20 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 if(sendCommandToTracker(cmdStr) == 0){
-                    receiveReplyFromTracker();
+                    
+                    char responseBuffer[1024*512] = {0};
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+                        return 0;
+                    }
+                    else{
+                        
+                        string response(responseBuffer);
+                        vector<string> res = splitString(response, '$');
+                        printVector(res);
+                        Logger::Info("************************************");
+                    }
                 }
                 else{
                     Logger::Error("Command Couldn't sent to Tracker.");
@@ -1259,7 +1348,7 @@ int main()
 
                 // downloadThread.push_back(thread(downloadFile, cmd));
                 if(downloadFile(cmd) == 0 ){
-                    cout<<"File downloaded successfully"<<endl;
+                    cout<<"File downloaded successfully. No corruption found."<<endl;
                 }
                 else{
                     cout<<"Failed to download File"<<endl;
@@ -1269,7 +1358,7 @@ int main()
         }
         
         else if(cmd[0] == "logout"){
-            if(cmd.size()>1){
+            if(cmd.size()!=1){
                 Logger::Error("Wrong arguments in 'logout'");
                 
                 continue;
@@ -1281,7 +1370,7 @@ int main()
             else{ 
                 cmdStr += " "+uname;
                 sendCommandToTracker(cmdStr);
-                char responseBuffer[1024];
+                char responseBuffer[524288];
 
                 bzero((char *)&responseBuffer, sizeof(responseBuffer));
 
@@ -1310,7 +1399,7 @@ int main()
         }
         
         else if(cmd[0] == "show_downloads"){
-            if(cmd.size()>1){
+            if(cmd.size()!=1){
                 Logger::Error("Wrong arguments in 'show_downloads'");
                 continue;
             }
@@ -1323,13 +1412,41 @@ int main()
             }
         }
         else if(cmd[0] == "stop_share"){
-            if(cmd.size()>3){
+            if(cmd.size()!=3){
                 Logger::Error("Wrong arguments in 'stop_share'");
                 continue;
             }
-            // stop_share(cmd[1]);
+            else if(!isLoggedIn){
+                cout<<"You are not logged in. Please log in first."<<endl;
+                continue;
+            }
+            else{ 
+                cmdStr += " "+uname;
+                if(sendCommandToTracker(cmdStr) == 0){
+                    char responseBuffer[1024*512] = {0};
+                    if(read(client_fd, responseBuffer, sizeof(responseBuffer))<=0){
+                        Logger::Error("Couldn't read the response of server / got EOF.");
+                        Logger::Info("************************************");
+                        return 0;
+                    }
+                    else{
+                        
+                        string response(responseBuffer);
+                        if(response == "success"){
+                            uploadedFiles.erase(cmd[1]+'$'+cmd[2]);
+                        }
+                        Logger::Info("************************************");
+                    }
+                }
+                else{
+                    Logger::Error("Command Couldn't sent to Tracker.");
+                }
+            }
         }
         else if(cmd[0]== "qq"){
+            close(client_fd); // close connection of tracker.
+            cout<<"close connection with tracker."<<endl;
+            return 0;
             break;
             
         }

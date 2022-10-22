@@ -117,6 +117,12 @@ void loadDATA(){
 
 }
 
+void printVector(vector<string> res){
+    for(size_t i=0; i<res.size(); i++){
+        cout<<res[i]<<endl;
+    }
+}
+
 // **********************************************
 // functions for executing tracker functionality
 // **********************************************
@@ -209,6 +215,7 @@ int createGroup(vector<string> cmd){
         if(groups.find(cmd[1]) == groups.end()){ // valid group name
 
             GroupInfo g1 = GroupInfo(cmd[2]);
+            g1.members.push_back(cmd[2]);
             groups[cmd[1]] = g1;
             return 0;
 
@@ -254,6 +261,42 @@ int leaveGroup(vector<string> cmd){
         if( find(groups[cmd[1]].members.begin(), groups[cmd[1]].members.end(), cmd[2]) != groups[cmd[1]].members.end()){
 
             groups[cmd[1]].members.erase(find(groups[cmd[1]].members.begin(), groups[cmd[1]].members.end(), cmd[2])); // member of this group
+
+
+            // vector<string> filevec = groups[cmd[1]].files;
+            // printVector(filevec);
+
+            for(size_t i = 0; i<groups[cmd[1]].files.size(); i++){
+                string gidFile = cmd[1]+'$'+groups[cmd[1]].files[i];
+
+                files[gidFile].senders.erase(find(files[gidFile].senders.begin(), files[gidFile].senders.end(), cmd[2])); // remove user from the sender list of files
+            }
+
+            if(groups[cmd[1]].owner == cmd[2]){
+                if(groups[cmd[1]].members.size() == 1){
+                    // only one member and he is owner of the group
+                    groups.erase(cmd[1]);
+                    
+                }
+                else{
+                    groups[cmd[1]].members.erase(find(groups[cmd[1]].members.begin(), groups[cmd[1]].members.end(), cmd[2]));
+                    string newOwner = groups[cmd[1]].members[0];
+                    Logger::Info("New group owner of the group: "+cmd[1]+" is: "+newOwner+".");
+                    groups[cmd[1]].owner = newOwner;
+                }
+
+            }
+
+            cout<<"after removing "<<cmd[2]<<" from the group."<<endl;
+
+            for(size_t i = 0; i<groups[cmd[1]].files.size(); i++){
+                string gidFile = cmd[1]+'$'+groups[cmd[1]].files[i];
+                cout<<"file: "<<gidFile<<"  ";
+
+                printVector(files[gidFile].senders);
+            }
+        
+
             return 0;
 
         }
@@ -352,7 +395,7 @@ string listGroups(vector<string> cmd){
 }
 
 string listFiles(vector<string> cmd){
-    string groupId = cmd[0];
+    string groupId = cmd[1];
 
     string res = "";
     if(groups.size() == 0 ){ 
@@ -369,19 +412,32 @@ string listFiles(vector<string> cmd){
         for(size_t i = 0; i<groups[groupId].files.size(); i++){
             res += groups[groupId].files[i] + "$";
         }
+        if(res.size()>0)res.pop_back();
+        else{
+            res = "No files present in group.";
+        }
 
     }
     return res;
 }
 
+string stopShare(vector<string> cmd){
+    string gid = cmd[1];
+    string fileName = cmd[2];
+    string uid = cmd[3];
+
+    files[gid+'$'+fileName].senders.erase(find(files[gid+'$'+fileName].senders.begin(), files[gid+'$'+fileName].senders.end(), uid));
+    return "success";
+}
 
 string uploadFile(vector<string> cmd){
-    // cmd:: upload_file(0) fileName(1) gid(2) userId(3) fileSize(4) (SHA) latter
+    // cmd:: upload_file(0) fileName(1) gid(2) userId(3) fileSize(4) (SHA)(5) latter
 
     //first check if user belogs to group or not
     string fileName = cmd[1];
     string groupId = cmd[2];
     string userId = cmd[3];
+    string shaone = cmd[5];
     long long fileSize = stoi(cmd[4]);
 
     if(groups.size()>0 && groups.find(groupId) != groups.end() && 
@@ -391,9 +447,10 @@ string uploadFile(vector<string> cmd){
         //group exist && you are member in group and file not exist in group
         vector<string> slist;
         slist.push_back(userId);
-        FileInfo f1 = FileInfo(fileName, fileSize, slist);
+        FileInfo f1 = FileInfo(fileName, fileSize, shaone, slist);
 
         files[groupId+"$"+fileName] = f1;
+        groups[groupId].files.push_back(fileName);
 
         Logger::Info("File Successfully Uploaded.");
 
@@ -428,7 +485,8 @@ string downloadFile(vector<string> cmd){
     else{
         FileInfo f1 = files[groupId+"$"+fileName];
         string msg = "";
-        msg += to_string(f1.fileSize) + "$";
+        string shaone = f1.sha1;
+        msg += to_string(f1.fileSize) + "$" +shaone + "$";
 
         vector<string> sendersUname = files[groupId+"$"+fileName].senders;
 
@@ -478,9 +536,9 @@ void * serverserving(void * arg){
         
         Logger::Info(msg.c_str());
 
-        char buffer[1024] = {0};
+        char buffer[524288] = {0};
 
-        int valread = read(new_socket, buffer, 1024);
+        int valread = read(new_socket, buffer, 524288);
         printf("%s\n", buffer);
 
         Logger::Info("*** Recieved Msg ***");
@@ -569,7 +627,7 @@ void * serverserving(void * arg){
             Logger::Info("executing 'leave_group'...");
             if(leaveGroup(cmd) == 0){
                 
-                replyMsg = "Group '"+ cmd[1] +"' successfuly joined.";
+                replyMsg = "Group '"+ cmd[1] +"' successfuly leaved.";
                 send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
                 
@@ -581,6 +639,7 @@ void * serverserving(void * arg){
                 
             }
         }
+        
         else if(cmd[0] == "list_requests"){
 
             string replyMsg;
@@ -703,13 +762,14 @@ void * serverserving(void * arg){
         else if(cmd[0] == "download_file"){
 
             string replyMsg;
-            Logger::Info("executing 'upload_file'...");
+            Logger::Info("executing 'download_file'...");
             replyMsg = downloadFile(cmd);
 
             send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
             Logger::Error("Reply Msg send to client");
 
         }
+        
         else if(cmd[0] == "logout"){
             
             string replyMsg;
@@ -719,18 +779,22 @@ void * serverserving(void * arg){
             send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
             Logger::Error("Reply Msg send to client");
         }
+        
         else if(cmd[0] == "show_downloads"){
             if(cmd.size()>1){
                 Logger::Error("Too many arguments in 'show_downloads'");
             }
             // show_downloads(cmd[1]);
         }
+        
         else if(cmd[0] == "stop_share"){
-            if(cmd.size()>3){
-                Logger::Error("Too many arguments in 'stop_share'");
-            }
-            // stop_share(cmd[1]);
+            string replyMsg;
+            Logger::Info("executing 'stop_share'...");
+            replyMsg = stopShare(cmd);
+            send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
+            Logger::Info("Reply Msg send to client");
         }
+        
         else if(cmd[0] == "i_am_leacher"){
             string groupId = cmd[1];
             string fileName = cmd[2];
