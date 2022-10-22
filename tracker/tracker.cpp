@@ -104,9 +104,13 @@ void loadDATA(){
 
     groups["swami"].members.push_back("rj");
     groups["swami"].members.push_back("jsn");
+    groups["swami"].members.push_back("meet");
 
     UserInfo u2 = UserInfo("rj", "", "");
     users["rj"] = u2;
+
+    UserInfo u3 = UserInfo("meet", "", "");
+    users["meet"] = u3;
 
     GroupInfo g2 = GroupInfo("rj");
     groups["shree"] = g1;
@@ -432,9 +436,10 @@ string downloadFile(vector<string> cmd){
             // if(find(isLoggedIn[sendersUname[i]].begin(), isLoggedIn[sendersUname[i]].end(), sendersUname[i]) != isLoggedIn[sendersUname[i]].end()){
             if(isLoggedIn.size()>0 && isLoggedIn.find(sendersUname[i]) != isLoggedIn.end()){
                 // if user is alive
-                msg += isLoggedIn[sendersUname[i]][0]+"$"+isLoggedIn[sendersUname[i]][1];
+                msg += isLoggedIn[sendersUname[i]][0]+"$"+isLoggedIn[sendersUname[i]][1]+"$";
             }
         }
+        msg.pop_back(); // remove last "$"
         cout<<"Tracker send msg is:"<<msg<<endl;
         // msg.pop_back();
         return msg;
@@ -442,6 +447,18 @@ string downloadFile(vector<string> cmd){
     
 }
 
+string logout(vector<string> cmd){
+    string uid = cmd[1];
+
+    if(isLoggedIn.erase(uid)){
+        // users[uid].ip = "";
+        // users[uid].port = "";
+        return "Logout successfull.";
+    }
+    else{
+        return "ErrorLGOT";
+    }
+}
 
 // ***************************************
 // this function servs the peer commands
@@ -694,10 +711,13 @@ void * serverserving(void * arg){
 
         }
         else if(cmd[0] == "logout"){
-            if(cmd.size()>1){
-                Logger::Error("Too many arguments in 'logout'");
-            }
-            // logout(cmd[1]);
+            
+            string replyMsg;
+            Logger::Info("executing 'logout'...");
+            replyMsg = logout(cmd);
+            cout<<"LOGOUT: "<<replyMsg<<endl;
+            send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
+            Logger::Error("Reply Msg send to client");
         }
         else if(cmd[0] == "show_downloads"){
             if(cmd.size()>1){
@@ -710,6 +730,12 @@ void * serverserving(void * arg){
                 Logger::Error("Too many arguments in 'stop_share'");
             }
             // stop_share(cmd[1]);
+        }
+        else if(cmd[0] == "i_am_leacher"){
+            string groupId = cmd[1];
+            string fileName = cmd[2];
+            string uname = cmd[3];
+            files[groupId+"$"+fileName].senders.push_back(uname); // check if user already not present in the senders list.
         }
         else{
             Logger::Error("Incorrect command entered..!");
