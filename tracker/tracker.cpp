@@ -17,8 +17,8 @@ using namespace std;
 // global variables
 pthread_t servingThread[10];
 int servingThreadIndex=0;
-int port = 7000;
-string ip = "127.1.2.1";
+int port;
+string ip;
 
 
 
@@ -183,10 +183,13 @@ int loginUser(vector<string> cmd){
     if(users.find(cmd[1])==users.end()){ // user does not exist with given uid
         return -1;
     }
+    else if(isLoggedIn.find(cmd[1])!=isLoggedIn.end()){
+        return -1; // user is already logged in.
+    }
     else if(users[cmd[1]].password == cmd[2]){ // password matched
         users[cmd[1]].ip = cmd[4];
         users[cmd[1]].port = cmd[5];
-        cout<<"ip: "<<users[cmd[1]].ip<<" && port: "<<users[cmd[1]].port<<endl;
+        //cout<<"ip: "<<users[cmd[1]].ip<<" && port: "<<users[cmd[1]].port<<endl;
         vector<string> vec;
         vec.push_back(cmd[4]);
         vec.push_back(cmd[5]);
@@ -248,7 +251,33 @@ int joinGroup(vector<string> cmd){
 
     }
     return -1; // unexpected error
-} 
+}
+
+
+vector<string> splitString(string inp, char delim)
+{
+    vector<string> ans;
+    string temp = "";
+    for (size_t i = 0; i < inp.size(); i++)
+    {
+        if (inp[i] == delim)
+        {	
+			if(temp.size()>0)
+            ans.push_back(temp);
+            temp = "";
+        }
+        else
+        {
+            temp += inp[i];
+        }
+    }
+    if (temp.size() > 0)
+    {
+        ans.push_back(temp);
+    }
+
+    return ans;
+}
 
 int leaveGroup(vector<string> cmd){
 
@@ -576,7 +605,7 @@ void * serverserving(void * arg){
         else if(cmd[0] == "login"){
             Logger::Info("executing 'login'...");
             if(loginUser(cmd) == 0){
-                string replyMsg = "User "+ cmd[1] +" successfuly logged in.";
+                string replyMsg = "Login Successfull";
 
                 send(new_socket, replyMsg.c_str(), replyMsg.size(), 0);
                 Logger::Info("Reply Msg send to client");
@@ -875,25 +904,47 @@ void * listening(void* arg){
     
 }
 
-int main(){
+int main(int argc, char** argv){
     // port = 7000; set port here from the cmd args
     // ip = "127.1.1.1";
     // string arg1 = "127.1.1.1:7000";
+
+    if(argc != 3){
+        cout<<"Wrong number of arguments passed.!"<<endl;
+        return -1;
+    }
+
+    ifstream tinfo;
+    tinfo.open(argv[1]);
+
+    string sLine;
+    if(!tinfo.eof()){
+        tinfo >> sLine;
+    }
+    else{
+        cout<<"Couldn't read data from tracker file."<<endl;
+        return -1;
+    }
+
+    vector<string> tripp = splitString(sLine, ':');
+    ip = tripp[0], port =stoi(tripp[1]);
 
 
 	ofstream log_file("logFile.txt", ios_base::out | ios_base::trunc );
 
     Logger::Info("Tracker Started Servicing ");
+    cout<<"Tracker Started Servicing."<<endl;
 
-    loadDATA();
+    // loadDATA();
 
     pthread_t servingThread;
 
     pthread_create(&servingThread, NULL, listening, NULL);
 
     while(1){
+        cout<<">>> ";
         string inp;
-        cin>>inp;
+        getline(cin, inp);
 
         if(inp=="quit"){
             // copy in memory data structure into local files
@@ -901,6 +952,7 @@ int main(){
         }
     }
 
+    pthread_cancel(servingThread);
     pthread_join(servingThread,NULL);
 
 

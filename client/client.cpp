@@ -154,19 +154,8 @@ string calculateHashofchunk(char *schunk, int length1, int shorthashflag){
 
     //cout<<"hash : "<<buf<<endl;
     string ans;
-    if (shorthashflag == 1)
-    {
-        for (int i = 0; i < 20; i++)
-        {
-            ans += buf[i];
-        }
-    }
-    else
-    {
-        for (int i = 0; i < SHA_DIGEST_LENGTH * 2; i++)
-        {
-            ans += buf[i];
-        }
+    for (int i = 0; i < 20; i++) {
+        ans += buf[i];
     }
     return ans;
 }
@@ -186,11 +175,11 @@ string calculateFileHash(char *path){
     stat(path, &fstatus);
 
     // Logic for deviding file1 into chunks
-    long int total_size = fstatus.st_size;
+    long int totalSize = fstatus.st_size;
     long int chunk_size = CHUNKSIZE;
 
-    int total_chunks = total_size / chunk_size;
-    int last_chunk_size = total_size % chunk_size;
+    int total_chunks = totalSize / chunk_size;
+    int last_chunk_size = totalSize % chunk_size;
 
     if (last_chunk_size != 0){
         ++total_chunks;
@@ -220,7 +209,7 @@ string calculateFileHash(char *path){
 
 void printVector(vector<string> res){
     for(size_t i=0; i<res.size(); i++){
-        cout<<res[i]<<endl;
+        cout<<" ["<<i+1<<"] "<<res[i]<<"."<<endl;
     }
 }
 
@@ -283,10 +272,6 @@ int sendChunk(vector<string> cmd, int new_socket){
             // get chunk from the file and send it to user
             string filePath = f1.filePath;
 
-            // int fd = open(filePath.c_str(), O_RDONLY);  
-            // char buffer[MaxBufferLength];
-
-            // #########################################################
             std::ifstream fp1(filePath, std::ios::in|std::ios::binary);
             fp1.seekg(chunkNum*CHUNKSIZE, fp1.beg);
 
@@ -298,7 +283,7 @@ int sendChunk(vector<string> cmd, int new_socket){
             int count = fp1.gcount();
 
             Logger::Info("Data read count: "+to_string(count));
-            Logger::Info("Data is: "+string(buffer));
+            // Logger::Info("Data is: "+string(buffer));
 
             if ((rc = send(new_socket, buffer, count, 0)) == -1) {
                 // write(new_socket, chunkMap.c_str(), chunkMap.size()); here send is used instead of write.
@@ -330,53 +315,51 @@ void *peerServerServing(void *arg)
 {
     int new_socket = *(int *)arg;
 
-    // while(1){
+    string msg = "Peer "+ip+':'+to_string(port)+" started servicing."+to_string(new_socket);
 
-        string msg = "Peer "+ip+':'+to_string(port)+" started servicing."+to_string(new_socket);
-
-        Logger::Info(msg.c_str());
+    Logger::Info(msg.c_str());
 
 
 
-        char INPbuffer[524288] = {0};
+    char INPbuffer[524288] = {0};
 
-        int valread = read(new_socket, INPbuffer, 524288);
-        // printf("%s\n", INPbuffer);
+    int valread = read(new_socket, INPbuffer, 524288);
+    // printf("%s\n", INPbuffer);
 
-        Logger::Info("################Recieved Msg From PEER################");
-        Logger::Info(INPbuffer);
+    Logger::Info("***************Recieved Msg From PEER***************");
+    Logger::Info(INPbuffer);
 
-        // check if other peer is asking for chunk or chunk map(chunkDetails of file).
+    // check if other peer is asking for chunk or chunk map(chunkDetails of file).
 
-        // it asks for chunkDetails
-        vector<string> cmd = splitString(INPbuffer, ' ');
+    // it asks for chunkDetails
+    vector<string> cmd = splitString(INPbuffer, ' ');
 
-        if(cmd[0] == "get_chunk_details"){
-            // function for sending chunk details (other peer asked).
-            string chunkMap = getChunkDetails(cmd);
+    if(cmd[0] == "get_chunk_details"){
+        // function for sending chunk details (other peer asked).
+        string chunkMap = getChunkDetails(cmd);
 
-            write(new_socket, chunkMap.c_str(), chunkMap.size());
-            Logger::Info("chunk vector of file: "+cmd[2]+" is: "+chunkMap);
+        write(new_socket, chunkMap.c_str(), chunkMap.size());
+        Logger::Info("chunk vector of file: "+cmd[2]+" is: "+chunkMap);
 
-        }
+    }
 
-        else if(cmd[0] == "get_chunk"){
-
-
-            // thread *th = new thread(sendChunk, cmd, new_socket); 
-            // thread removed temporaryly
-            sendChunk(cmd, new_socket);
-        }
-
-        else{
-            string s = "Erorr201";
-            write(new_socket, s.c_str(), s.size()); //Invalid command reached at Peer server
-        }
+    else if(cmd[0] == "get_chunk"){
 
 
+        // thread *th = new thread(sendChunk, cmd, new_socket); 
+        // thread removed temporaryly
+        sendChunk(cmd, new_socket);
+    }
 
-        pthread_exit(NULL);
-        return arg;
+    else{
+        string s = "Erorr201";
+        write(new_socket, s.c_str(), s.size()); //Invalid command reached at Peer server
+    }
+
+
+
+    pthread_exit(NULL);
+    return arg;
     
 }
 
@@ -477,12 +460,12 @@ int receiveReplyFromTracker(){
         Logger::Error("Couldn't read the response of server / got EOF.");
         Logger::Info("************************************");
 
-        return 0;
+        return -1;
 
     }
     else{
 
-        printf("Tracker Response : => %s\n",responseBuffer);
+        printf("Tracker Reply: ==> %s\n",responseBuffer);
         Logger::Info(responseBuffer);
         Logger::Info("************************************");
         bzero((char *)&responseBuffer, sizeof(responseBuffer));
@@ -536,7 +519,6 @@ int uploadFile(vector<string> cmd){
     }
     else if(string(responseBuffer) == "File Successfully Uploaded."){
 
-        printf("Tracker Response : => %s\n",responseBuffer);
         Logger::Info(responseBuffer);
         Logger::Info("************************************");
 
@@ -600,7 +582,7 @@ int fetchChunkInfoFromPeer(string peerIp, int peerPort, string groupId , string 
 
     read(peer_sd, responseBuffer, sizeof(responseBuffer));
 
-    Logger::Info("Received chunk details as: "+string(responseBuffer));
+    //Logger::Info("Received chunk details as: "+string(responseBuffer));
 
     currDownloadFilechunkMaps.push_back(string(responseBuffer));
     numToIP[i] = make_pair(peerIp, peerPort);
@@ -608,10 +590,11 @@ int fetchChunkInfoFromPeer(string peerIp, int peerPort, string groupId , string 
 
     close(peer_sd); // close peer connection.
 
-    cout<<"chunk map at this time:"<<endl;
-
+    // cout<<"chunk map at this time:"<<endl;
+    Logger::Info("chunk map at this time:");
     for(size_t i=0; i<currDownloadFilechunkMaps.size(); i++){
-        cout<<currDownloadFilechunkMaps[i]<<endl;
+        // cout<<currDownloadFilechunkMaps[i]<<endl;
+        Logger::Info(currDownloadFilechunkMaps[i]);
     }
 
 
@@ -709,7 +692,6 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
         while (tot < reqDataSize) {
             n = read(peer_sd, buffer, CHUNKSIZE-1);
             if (n <= 0){
-                cout<<"break loop for chunkNum: "<<chunkNum<<endl;
                 break;
             }
 
@@ -741,7 +723,6 @@ int fetchChunkFromPeer(string peerIp, int peerPort, string groupId, string fileN
             return -1;
         }
 
-        cout<<"[outside] break loop for chunkNum: "<<chunkNum<<endl;
         if(uploadedFiles.find(groupId+'$'+fileName) == uploadedFiles.end()){
             // cout<<"[DEBUG] First chunk of file recieved."<<endl;
             // first time its uploadeing.
@@ -817,7 +798,6 @@ int downloadFile(vector<string> cmd){
     else{
         // we found the file details
         string fileDtls(responseBuffer);
-        printf("Tracker Response : => %s\n",responseBuffer);
         Logger::Info(responseBuffer);
 
         vector<string> vec = splitString(fileDtls, '$');
@@ -849,13 +829,6 @@ int downloadFile(vector<string> cmd){
 
         }
 
-        // print ip and port
-        cout<<"IP and port of Seeders or leechers"<<endl;
-        for(size_t i=0; i<ips.size(); i++){
-
-           cout<<"IP: "<<ips[i].first<<" Port: "<<ips[i].second<<endl;
-
-        }
         if(ips.size() == 0){
 
             cout<<"No seeders available for this file.."<<endl;
@@ -863,10 +836,17 @@ int downloadFile(vector<string> cmd){
 
             return -1;
         }
+        // print ip and port
+        cout<<"***********************************"<<endl;
+        cout<<"IP and port of Seeders or leechers"<<endl;
+        for(size_t i=0; i<ips.size(); i++){
+
+           cout<<"IP: "<<ips[i].first<<" Port: "<<ips[i].second<<endl;
+
+        }
         
         downloadingFiles[groupId+'$'+fileName] = f1;
 
-        // ###########################################################################
         vector<thread> getChunkMapthread;
         vector<string> currDownloadFilechunkMaps;
         map<int, pair<string, long long>> numToIP;
@@ -883,9 +863,9 @@ int downloadFile(vector<string> cmd){
 
         // print chunkMap;
 
-        cout<<"chunk received... chunks are."<<endl;
+        Logger::Info("chunk received... chunks are.");
         for(size_t i=0; i<currDownloadFilechunkMaps.size(); i++){
-            cout<<currDownloadFilechunkMaps[i]<<endl;
+            Logger::Info(currDownloadFilechunkMaps[i]);
         }
 
         vector<vector<int>> chunkToPeersList(currDownloadFilechunkMaps[0].size());
@@ -900,16 +880,6 @@ int downloadFile(vector<string> cmd){
             }
 
         }
-
-        // print chunkToPeer file
-
-        // for(size_t i=0; i<chunkToPeersList.size(); i++){
-        //     cout<<"chunk No: ";
-        //     for(size_t j=0; j<chunkToPeersList[i].size(); j++){
-        //         cout<<chunkToPeersList[i][j]<<", ";
-        //     }
-        //     cout<<endl;
-        // }
 
         // // get chunk from peer and add it in file
 
@@ -1020,14 +990,19 @@ int establishConnectionWithTracker(){
 }
 
 void showDownload(){
+    int times = 0;
     for (auto i : downloadingFiles){
         vector<string> vec = splitString(i.first, '$');
-        cout <<"[D] ["<< vec[0] << "]  " << vec[1] << endl;
+        times++;
+        cout <<times<<". "<<"[D] ["<< vec[0] << "]  " << vec[1] << endl;
     }
 
     for(size_t i=0; i<downloadCompletedFiles.size(); i++){
-        cout <<"[C] ["<< downloadCompletedFiles[i].first << "]  " << downloadCompletedFiles[i].second << endl;
+        times++;
+        cout <<times<<". "<<"[C] ["<< downloadCompletedFiles[i].first << "]  " << downloadCompletedFiles[i].second << endl;
     }
+
+    cout<<"+-+ Total Downloads: "<<times<<" +-+"<<endl;
 }
 
 int main(int argc, char** argv)
@@ -1080,13 +1055,18 @@ int main(int argc, char** argv)
         cout<<">>> ";
         getline(cin, cmdStr);
 
+        if(cmdStr == ""){
+            cout<<"Enter proper command"<<endl;
+            continue;
+        }
         vector<string> cmd;
         cmd = getCommand(cmdStr);
+
 
         if(cmd[0]=="create_user"){
 
             if(cmd.size() != 3){
-                Logger::Error("Wrong arguments in 'create_user'");
+                cout<<"Wrong arguments in 'create_user'"<<endl;
                 continue;
             }
             else if(isLoggedIn){
@@ -1104,7 +1084,7 @@ int main(int argc, char** argv)
         
         else if(cmd[0] == "login"){
             if(cmd.size()!=3){
-                Logger::Error("Wrong arguments in 'login'");
+                cout<<"Wrong arguments in 'login'"<<endl;
                 continue;
             }
             else if(isLoggedIn){
@@ -1116,26 +1096,26 @@ int main(int argc, char** argv)
                 if(sendCommandToTracker(cmdStr) == 0){
                     char resBuff[524288];
                     read(client_fd, resBuff, sizeof(resBuff));
-                    if(string(resBuff) == "Failed"){
-                        Logger::Error("Unsucessful login");
-                        cout<<"Invalid ID or Password. Please try Again!!"<<endl;
-                    }
-                    else {
+                    if(string(resBuff) == "Login Successfull"){
                         isLoggedIn = true;
                         uname = cmd[1];
                         cout<<"Logged in as: "<<uname<<endl;
+                    }
+                    else {
+                        Logger::Error("Unsucessful login");
+                        cout<<"Invalid ID or Password or User may already logged in from somewhere else. Please try Again!!"<<endl;
 
                     }
                 }
                 else{
-                    Logger::Error("Command Couldn't sent to Tracker.");
+                    cout<<"Command Couldn't sent to Tracker."<<endl;
                 }
             }
         }
         
         else if(cmd[0] == "create_group"){
             if(cmd.size()!=2){
-                Logger::Error("Wrong arguments in 'create_group'");
+                cout<<"Wrong arguments in 'create_group'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1148,14 +1128,14 @@ int main(int argc, char** argv)
                     receiveReplyFromTracker();
                 }
                 else{
-                    Logger::Error("Command Couldn't sent to Tracker.");
+                    cout<<"Command Couldn't sent to Tracker."<<endl;
                 }
             }
         }
 
         else if(cmd[0] == "join_group"){
             if(cmd.size() != 2){
-                Logger::Error("Wrong arguments in 'join_group'");
+                cout<<"Wrong arguments in 'join_group'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1175,7 +1155,7 @@ int main(int argc, char** argv)
         
         else if(cmd[0] == "leave_group"){
             if(cmd.size() != 2){
-                Logger::Error("Wrong arguments in 'leave_group'");
+                cout<<"Wrong arguments in 'leave_group'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1188,14 +1168,14 @@ int main(int argc, char** argv)
                     receiveReplyFromTracker();
                 }
                 else{
-                    Logger::Error("Command Couldn't sent to Tracker.");
+                    cout<<"Command Couldn't sent to Tracker."<<endl;
                 }
             }
         }
         
         else if(cmd[0] == "list_requests"){
             if(cmd.size() != 2){
-                Logger::Error("Wrong arguments in 'list_requests'");
+                cout<<"Wrong arguments in 'list_requests'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1234,7 +1214,7 @@ int main(int argc, char** argv)
         
         else if(cmd[0] == "accept_request"){
             if(cmd.size() != 3){
-                Logger::Error("Wrong arguments in 'accept_request'");
+                cout<<"Wrong arguments in 'accept_request"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1254,7 +1234,7 @@ int main(int argc, char** argv)
         
         else if(cmd[0] == "list_groups"){
             if(cmd.size() != 1){
-                Logger::Error("Wrong arguments in 'list_groups'");
+                cout<<"Wrong arguments in 'list_groups'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1286,7 +1266,7 @@ int main(int argc, char** argv)
 
         else if(cmd[0] == "list_files"){
             if(cmd.size() != 2){
-                Logger::Error("Wrong arguments in 'list_files'");
+                cout<<"Wrong arguments in 'list_files'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1319,7 +1299,7 @@ int main(int argc, char** argv)
         }
         else if(cmd[0] == "upload_file"){
             if(cmd.size()!=3){
-                Logger::Error("Wrong arguments in 'upload_file'");
+                cout<<"Wrong arguments in 'upload_file'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1337,7 +1317,7 @@ int main(int argc, char** argv)
         }
         else if(cmd[0] == "download_file"){
             if(cmd.size()!=4){
-                Logger::Error("Wrong arguments in 'download_file'");
+                cout<<"Wrong arguments in 'download_file'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1359,7 +1339,7 @@ int main(int argc, char** argv)
         
         else if(cmd[0] == "logout"){
             if(cmd.size()!=1){
-                Logger::Error("Wrong arguments in 'logout'");
+                cout<<"Wrong arguments in 'logout'"<<endl;
                 
                 continue;
             }
@@ -1400,7 +1380,7 @@ int main(int argc, char** argv)
         
         else if(cmd[0] == "show_downloads"){
             if(cmd.size()!=1){
-                Logger::Error("Wrong arguments in 'show_downloads'");
+                cout<<"Wrong arguments in 'show_downloads'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
@@ -1413,7 +1393,7 @@ int main(int argc, char** argv)
         }
         else if(cmd[0] == "stop_share"){
             if(cmd.size()!=3){
-                Logger::Error("Wrong arguments in 'stop_share'");
+                cout<<"Wrong arguments in 'stop_share'"<<endl;
                 continue;
             }
             else if(!isLoggedIn){
