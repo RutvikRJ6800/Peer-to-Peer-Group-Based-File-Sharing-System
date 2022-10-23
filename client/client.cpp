@@ -208,9 +208,11 @@ string calculateFileHash(char *path){
 }
 
 void printVector(vector<string> res){
+    cout<<"---------------------------------------"<<endl;
     for(size_t i=0; i<res.size(); i++){
         cout<<" ["<<i+1<<"] "<<res[i]<<"."<<endl;
     }
+    cout<<"---------------------------------------"<<endl;
 }
 
 string getChunkDetails(vector<string> cmd){
@@ -991,6 +993,7 @@ int establishConnectionWithTracker(){
 
 void showDownload(){
     int times = 0;
+    cout<<"---------------------------------------"<<endl;
     for (auto i : downloadingFiles){
         vector<string> vec = splitString(i.first, '$');
         times++;
@@ -1003,6 +1006,7 @@ void showDownload(){
     }
 
     cout<<"+-+ Total Downloads: "<<times<<" +-+"<<endl;
+    cout<<"---------------------------------------"<<endl;
 }
 
 int main(int argc, char** argv)
